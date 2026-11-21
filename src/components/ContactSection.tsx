@@ -1,0 +1,353 @@
+import React, { useState } from 'react';
+import {
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  Mail,
+  MapPin,
+  MessageCircle,
+  Phone,
+  ShieldAlert,
+} from 'lucide-react';
+import { CONTACT_CARD_ASSETS, DEALERSHIP_INFO } from '../data/dealership';
+import { generateBookingRef } from '../lib/utils';
+import { DealershipImage } from './DealershipImage';
+import { FadeUp, SectionHeader } from './MotionPrimitives';
+import { Button, Input, Label, Select, Textarea } from './ui/shadcn';
+
+export function ContactSection() {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [department, setDepartment] = useState('New Vehicle Sales');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [confirmationRef, setConfirmationRef] = useState<string | null>(null);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !phone.trim() || !email.trim()) {
+      setError('Please complete your name, contact number, and email address.');
+      return;
+    }
+    if (!email.includes('@')) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    setError('');
+    setConfirmationRef(generateBookingRef('ENQ'));
+  };
+
+  const resetForm = () => {
+    setName('');
+    setPhone('');
+    setEmail('');
+    setMessage('');
+    setConfirmationRef(null);
+  };
+
+  return (
+    <section
+      id="contact"
+      aria-labelledby="contact-heading"
+      className="bg-white py-16 sm:py-24"
+    >
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <SectionHeader
+            kicker="Visit & Connect"
+            title="Newcastle Volkswagen Contact Centre"
+            description="Visit our showroom in the heart of Newcastle CBD or connect directly with Sales, Service, Parts, or Compliance."
+          />
+
+          <FadeUp delay={0.08} className="flex flex-wrap items-center gap-3">
+            <a
+              href={DEALERSHIP_INFO.mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#CBD5E1] bg-white px-4 text-xs font-semibold text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC] whitespace-nowrap"
+            >
+              <MapPin className="h-3.5 w-3.5" />
+              <span>Get Directions</span>
+              <ExternalLink className="h-3 w-3" />
+            </a>
+            <a
+              href={DEALERSHIP_INFO.whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#001E50] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#00437A] whitespace-nowrap"
+            >
+              <MessageCircle className="h-3.5 w-3.5" />
+              <span>Chat on WhatsApp</span>
+            </a>
+          </FadeUp>
+        </div>
+
+        <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-12">
+          {/* Left 4 Contact Cards */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-6">
+            <FadeUp>
+              <div className="flex h-full flex-col justify-between overflow-hidden rounded-xl border border-[#E2E8F0] bg-[#F8FAFC]">
+                <div>
+                  <DealershipImage
+                    asset={CONTACT_CARD_ASSETS.showroom}
+                    alt="Newcastle Volkswagen 77 Allen Street Showroom"
+                    className="border-b border-[#E2E8F0]"
+                  />
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 text-[#001E50]">
+                      <MapPin className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <h3
+                        id="contact-heading"
+                        className="font-display text-base font-semibold text-[#091224]"
+                      >
+                        Physical & Postal Address
+                      </h3>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-[#475569]">
+                      {DEALERSHIP_INFO.street}
+                      <br />
+                      {DEALERSHIP_INFO.city}
+                      <br />
+                      {DEALERSHIP_INFO.province}
+                    </p>
+                  </div>
+                </div>
+                <div className="mx-5 mb-5 flex items-center justify-between border-t border-[#E2E8F0] pt-3 text-xs">
+                  <span className="font-mono text-[#64748B]">{DEALERSHIP_INFO.postal}</span>
+                  <a
+                    href={DEALERSHIP_INFO.mapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-[#001E50] hover:underline"
+                  >
+                    Map
+                  </a>
+                </div>
+              </div>
+            </FadeUp>
+
+            <FadeUp delay={0.05}>
+              <div className="flex h-full flex-col justify-between overflow-hidden rounded-xl border border-[#E2E8F0] bg-[#F8FAFC]">
+                <div>
+                  <DealershipImage
+                    asset={CONTACT_CARD_ASSETS.support}
+                    alt="Newcastle Volkswagen Customer Switchboard"
+                    className="border-b border-[#E2E8F0]"
+                  />
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 text-[#001E50]">
+                      <Phone className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <h3 className="font-display text-base font-semibold text-[#091224]">
+                        Switchboard & Compliance
+                      </h3>
+                    </div>
+                    <p className="mt-2 text-sm text-[#475569]">
+                      Sales, MasterCars, Finance (FSP {DEALERSHIP_INFO.fspNumber}), Service & Parts.
+                    </p>
+                  </div>
+                </div>
+                <div className="mx-5 mb-5 border-t border-[#E2E8F0] pt-3 space-y-1">
+                  <a
+                    href={DEALERSHIP_INFO.phoneHref}
+                    className="block font-mono text-base font-semibold text-[#001E50] hover:underline tabular-nums"
+                  >
+                    {DEALERSHIP_INFO.phoneIntl}
+                  </a>
+                  <a
+                    href={`mailto:${DEALERSHIP_INFO.complianceEmail}`}
+                    className="inline-flex items-center gap-1.5 text-xs text-[#475569] hover:text-[#001E50]"
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    <span>{DEALERSHIP_INFO.complianceEmail}</span>
+                  </a>
+                </div>
+              </div>
+            </FadeUp>
+
+            <FadeUp delay={0.1}>
+              <div className="flex h-full flex-col justify-between overflow-hidden rounded-xl border border-[#E2E8F0] bg-[#F8FAFC]">
+                <div>
+                  <DealershipImage
+                    asset={CONTACT_CARD_ASSETS.financeTeam}
+                    alt="Newcastle Volkswagen Sales & Finance Specialists"
+                    className="border-b border-[#E2E8F0]"
+                  />
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 text-[#001E50]">
+                      <Clock className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <h3 className="font-display text-base font-semibold text-[#091224]">
+                        Department Trading Hours
+                      </h3>
+                    </div>
+                    <dl className="mt-3 space-y-2 text-xs">
+                      {DEALERSHIP_INFO.hours.map((item) => (
+                        <div key={item.label} className="flex justify-between gap-2">
+                          <dt className="text-[#475569]">{item.label}</dt>
+                          <dd className="font-mono font-medium text-[#091224] whitespace-nowrap tabular-nums">
+                            {item.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </FadeUp>
+
+            <FadeUp delay={0.15}>
+              <div className="flex h-full flex-col justify-between overflow-hidden rounded-xl border border-[#001E50]/20 bg-[#001E50] text-white">
+                <div>
+                  <DealershipImage
+                    asset={CONTACT_CARD_ASSETS.vwAlert}
+                    alt="VW Alert 24/7 Roadside Assistance"
+                    className="border-b border-white/15"
+                  />
+                  <div className="p-5">
+                    <div className="flex items-center gap-2 text-white">
+                      <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <h3 className="font-display text-base font-semibold">
+                        24/7 VW Alert Roadside Assistance
+                      </h3>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-white/80">
+                      Emergency breakdown recovery anywhere in SA or cross-border.
+                    </p>
+                  </div>
+                </div>
+                <div className="mx-5 mb-5 border-t border-white/15 pt-3 space-y-1">
+                  <a
+                    href="tel:0860434737"
+                    className="block font-mono text-base font-semibold tracking-tight text-white hover:underline tabular-nums"
+                  >
+                    {DEALERSHIP_INFO.vwAlert} · {DEALERSHIP_INFO.vwRoadsideTollFree}
+                  </a>
+                  <p className="font-mono text-[11px] text-white/70 tabular-nums">
+                    Cross-border: {DEALERSHIP_INFO.vwRoadsideCrossBorder}
+                  </p>
+                </div>
+              </div>
+            </FadeUp>
+          </div>
+
+          {/* Right Direct Inquiry Form */}
+          <FadeUp delay={0.1} className="lg:col-span-6">
+            <div className="h-full rounded-2xl border border-[#E2E8F0] bg-white p-6 sm:p-8 shadow-xs">
+              {confirmationRef ? (
+                <div className="flex h-full flex-col items-start justify-center py-6">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#001E50]/10 text-[#001E50]">
+                    <CheckCircle2 className="h-6 w-6" />
+                  </div>
+                  <h3 className="mt-5 font-display text-2xl font-semibold text-[#091224]">
+                    Message received by {department}
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-[#475569]">
+                    Thank you, {name}. A Newcastle Volkswagen specialist will reach out to you on{' '}
+                    <span className="font-mono text-[#091224]">{phone}</span> shortly.
+                  </p>
+                  <div className="mt-5 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-xs font-mono text-[#091224]">
+                    Reference: {confirmationRef}
+                  </div>
+                  <Button variant="outline" size="md" className="mt-6" onClick={resetForm}>
+                    Send Another Enquiry
+                  </Button>
+                </div>
+              ) : (
+                <form onSubmit={handleSubmit} noValidate className="space-y-4">
+                  <div>
+                    <h3 className="font-display text-xl font-semibold text-[#091224]">
+                      Send a Direct Enquiry
+                    </h3>
+                    <p className="mt-1 text-sm text-[#475569]">
+                      Select your preferred department and we will reply promptly during business hours.
+                    </p>
+                  </div>
+
+                  {error && (
+                    <div
+                      role="alert"
+                      className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-medium text-red-800"
+                    >
+                      {error}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label htmlFor="contact-name">Full Name</Label>
+                      <Input
+                        id="contact-name"
+                        placeholder="e.g. Thabo Mkhize"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="contact-phone">Mobile Number</Label>
+                      <Input
+                        id="contact-phone"
+                        type="tel"
+                        placeholder="e.g. 082 555 0148"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <Label htmlFor="contact-email">Email Address</Label>
+                      <Input
+                        id="contact-email"
+                        type="email"
+                        placeholder="you@example.co.za"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="contact-dept">Department</Label>
+                      <Select
+                        id="contact-dept"
+                        value={department}
+                        onChange={(e) => setDepartment(e.target.value)}
+                      >
+                        <option>New Vehicle Sales</option>
+                        <option>MasterCars Pre-Owned</option>
+                        <option>Finance & Insurance</option>
+                        <option>Approved Service Centre</option>
+                        <option>Genuine Parts Counter</option>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="contact-message">How can we assist you?</Label>
+                    <Textarea
+                      id="contact-message"
+                      placeholder="Specify model interest, trade-in details, or service question..."
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
+                    <p className="text-[11px] text-[#64748B]">
+                      Processed by {DEALERSHIP_INFO.legalEntity} in compliance with POPIA.
+                    </p>
+                    <Button type="submit" size="lg">
+                      Submit Enquiry
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </FadeUp>
+        </div>
+      </div>
+    </section>
+  );
+}

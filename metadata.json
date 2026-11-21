@@ -1,0 +1,6 @@
+{
+  "name": "Newcastle Volkswagen",
+  "description": "Official Volkswagen dealership in Newcastle, KwaZulu-Natal, South Africa. Explore new VW models, monthly specials, vehicle finance, certified MasterCars, servicing, and genuine parts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

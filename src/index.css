@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-vw-navy: #001E50;
+  --color-vw-blue: #00437A;
+  --color-vw-sky: #0099DA;
+  --color-vw-ink: #091224;
+  --color-vw-slate: #475569;
+  --color-vw-canvas: #FFFFFF;
+  --color-vw-surface: #F8FAFC;
+  --color-vw-border: #E2E8F0;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 220 60% 9%;
+    --primary: 217 100% 16%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 98%;
+    --secondary-foreground: 220 60% 9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 19% 35%;
+    --border: 214 32% 91%;
+  }
+
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+    scroll-padding-top: 5.5rem;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.blueprint-grid {
+  background-image:
+    linear-gradient(to right, rgba(0, 30, 80, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 30, 80, 0.045) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.blueprint-grid-dark {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
