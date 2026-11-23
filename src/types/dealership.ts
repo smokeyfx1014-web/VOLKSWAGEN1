@@ -185,6 +185,23 @@ export interface CmsLeadSubmission {
   createdAt?: unknown;
 }
 
+export type StaffRole = 'admin' | 'agent';
+
+export interface StaffUserProfile {
+  uid: string;
+  fullName: string;
+  phone: string;
+  email: string;
+  role: StaffRole;
+  allocatedDealershipId: DealershipId | null;
+  mustChangePassword: boolean;
+  active: boolean;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  createdBy: string;
+  updatedBy: string;
+}
+
 export type AppRoute =
   | '/'
   | '/vehicles'

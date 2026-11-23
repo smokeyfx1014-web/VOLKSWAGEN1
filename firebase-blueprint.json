@@ -231,6 +231,39 @@
         "addedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role", "addedAt"]
+    },
+    "StaffUser": {
+      "title": "StaffUser",
+      "description": "Dealership staff user profile (Administrator or Car Sales Agent) allocated to a branch with first-login password setup tracking.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "phone": { "type": "string", "minLength": 7, "maxLength": 30 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "role": { "type": "string", "enum": ["admin", "agent"] },
+        "allocatedDealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "mustChangePassword": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string", "minLength": 2, "maxLength": 128 },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "uid",
+        "fullName",
+        "phone",
+        "email",
+        "role",
+        "allocatedDealershipId",
+        "mustChangePassword",
+        "active",
+        "createdAt",
+        "updatedAt",
+        "createdBy",
+        "updatedBy"
+      ]
     }
   },
   "firestore": {
@@ -257,6 +290,10 @@
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminUser" },
       "description": "Authorized dealership administrators."
+    },
+    "/staffUsers/{uid}": {
+      "schema": { "$ref": "#/entities/StaffUser" },
+      "description": "Administrator and Car Sales Agent accounts with role and allocated dealership scoping."
     }
   }
 }

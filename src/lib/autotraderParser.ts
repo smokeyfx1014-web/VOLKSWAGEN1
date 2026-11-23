@@ -1,4 +1,4 @@
-import { CmsVehicle, DealershipId } from '../types/dealership.ts';
+import type { CmsVehicle, DealershipId } from '../types/dealership.ts';
 
 export interface ParsedAutoTraderVehicle {
   id: string;

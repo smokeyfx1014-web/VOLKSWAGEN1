@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import { getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import {
-  ParsedAutoTraderVehicle,
+  type ParsedAutoTraderVehicle,
   extractAutoTraderPaginationInfo,
   parseAutoTraderHtml,
   validateAutoTraderDealerUrl,

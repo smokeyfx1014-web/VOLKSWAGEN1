@@ -8,10 +8,17 @@ import React, {
   useState,
 } from 'react';
 import {
+  EmailAuthProvider,
   User,
+  createUserWithEmailAndPassword,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updatePassword,
+  updateProfile,
 } from 'firebase/auth';
 import {
   collection,
@@ -41,6 +48,7 @@ import {
   OperationType,
   auth,
   db,
+  getProvisionerAuth,
   googleProvider,
   handleFirestoreError,
 } from '../lib/firebase';
@@ -53,6 +61,8 @@ import {
   CmsVehicle,
   DealershipId,
   LeadSubmissionType,
+  StaffRole,
+  StaffUserProfile,
 } from '../types/dealership';
 import { useDealership } from './DealershipContext';
 
@@ -83,8 +93,17 @@ interface DealershipDataContextValue {
   user: User | null;
   authReady: boolean;
   isAdmin: boolean;
+  isSalesAgent: boolean;
+  canAccessPortal: boolean;
+  allocatedBranchId: DealershipId | null;
+  staffProfile: StaffUserProfile | null;
+  requiresPasswordSetup: boolean;
+  isDeactivatedStaff: boolean;
   authError: string | null;
   signInAdmin: () => Promise<void>;
+  signInWithStaffCredentials: (email: string, password: string) => Promise<void>;
+  sendStaffPasswordReset: (email: string) => Promise<void>;
+  completeInitialPasswordSetup: (currentPassword: string, newPassword: string) => Promise<void>;
   signOutAdmin: () => Promise<void>;
 
   loadingCatalog: boolean;
@@ -98,14 +117,15 @@ interface DealershipDataContextValue {
   activeCompetitions: CmsPromotion[];
   activeNews: CmsNewsArticle[];
 
-  // Admin full collections across the entire 3-branch group
+  // Admin / Agent collections
   allVehicles: CmsVehicle[];
   allPromotions: CmsPromotion[];
   archivedPromotions: CmsPromotion[];
   allNews: CmsNewsArticle[];
   leads: CmsLeadSubmission[];
+  staffUsers: StaffUserProfile[];
 
-  // Admin mutations
+  // Admin & Agent mutations
   seedCatalogToFirestore: () => Promise<void>;
   seedAllDefaultData: () => Promise<void>;
   saveVehicle: (vehicle: Omit<CmsVehicle, 'createdAt' | 'updatedAt' | 'updatedBy'> & { createdAt?: unknown }) => Promise<void>;
@@ -125,6 +145,25 @@ interface DealershipDataContextValue {
   deleteNews: (id: string) => Promise<void>;
   updateLeadStatus: (id: string, status: CmsLeadSubmission['status']) => Promise<void>;
   deleteLead: (id: string) => Promise<void>;
+  createStaffUser: (payload: {
+    fullName: string;
+    phone: string;
+    email: string;
+    role: StaffRole;
+    allocatedDealershipId: DealershipId | null;
+    defaultPassword: string;
+  }) => Promise<StaffUserProfile>;
+  updateStaffUser: (
+    uid: string,
+    updates: {
+      fullName: string;
+      phone: string;
+      role: StaffRole;
+      allocatedDealershipId: DealershipId | null;
+      active: boolean;
+    }
+  ) => Promise<void>;
+  removeStaffUser: (uid: string) => Promise<void>;
 
   // Public booking / lead submission (auto-tags activeDealershipId + homeDealershipId)
   submitLead: (payload: {
@@ -149,12 +188,14 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [rosterAdmin, setRosterAdmin] = useState(false);
+  const [staffProfile, setStaffProfile] = useState<StaffUserProfile | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [dbVehicles, setDbVehicles] = useState<CmsVehicle[] | null>(null);
   const [dbPromotions, setDbPromotions] = useState<CmsPromotion[] | null>(null);
   const [dbNews, setDbNews] = useState<CmsNewsArticle[] | null>(null);
   const [leads, setLeads] = useState<CmsLeadSubmission[]>([]);
+  const [staffUsers, setStaffUsers] = useState<StaffUserProfile[]>([]);
 
   const autoArchivedIdsRef = useRef<Set<string>>(new Set());
   const autoSeededRef = useRef(false);
@@ -169,106 +210,255 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     return () => window.clearInterval(timer);
   }, []);
 
-  // Track Firebase auth & admin role
+  // Track Firebase auth, admin roster & staff profile in real time
   useEffect(() => {
+    let unsubStaffDoc: (() => void) | null = null;
+
     const unsub = onAuthStateChanged(auth, async (nextUser) => {
+      if (unsubStaffDoc) {
+        unsubStaffDoc();
+        unsubStaffDoc = null;
+      }
+
       setUser(nextUser);
       setAuthError(null);
       if (!nextUser) {
         setRosterAdmin(false);
+        setStaffProfile(null);
         setAuthReady(true);
         return;
       }
 
-      if (
-        nextUser.emailVerified &&
-        nextUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL
-      ) {
-        setRosterAdmin(true);
-        setAuthReady(true);
-        return;
-      }
+      setAuthReady(false);
+      const isBootstrap =
+        Boolean(nextUser.emailVerified) &&
+        nextUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL;
 
       try {
-        const snap = await getDoc(doc(db, 'admins', nextUser.uid));
-        setRosterAdmin(snap.exists());
+        const [adminSnap, staffSnap] = await Promise.all([
+          isBootstrap
+            ? Promise.resolve(null)
+            : getDoc(doc(db, 'admins', nextUser.uid)).catch(() => null),
+          getDoc(doc(db, 'staffUsers', nextUser.uid)).catch(() => null),
+        ]);
+
+        setRosterAdmin(isBootstrap || Boolean(adminSnap?.exists()));
+        setStaffProfile(
+          staffSnap?.exists() ? (staffSnap.data() as StaffUserProfile) : null
+        );
       } catch {
-        setRosterAdmin(false);
+        setRosterAdmin(isBootstrap);
+        setStaffProfile(null);
       } finally {
         setAuthReady(true);
       }
+
+      unsubStaffDoc = onSnapshot(
+        doc(db, 'staffUsers', nextUser.uid),
+        (snap) => {
+          setStaffProfile(snap.exists() ? (snap.data() as StaffUserProfile) : null);
+        },
+        () => {
+          // Ignore transient listener errors for non-staff accounts
+        }
+      );
     });
-    return () => unsub();
+
+    return () => {
+      unsub();
+      if (unsubStaffDoc) unsubStaffDoc();
+    };
   }, []);
 
-  const isAdmin = Boolean(
+  const isBootstrappedOrRosterAdmin = Boolean(
     user &&
       ((user.emailVerified && user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL) ||
         rosterAdmin)
   );
 
-  // Real-time Firestore listeners
+  const isAdmin = Boolean(
+    user &&
+      (isBootstrappedOrRosterAdmin ||
+        (staffProfile?.role === 'admin' && staffProfile.active))
+  );
+
+  const isSalesAgent = Boolean(
+    user &&
+      !isAdmin &&
+      staffProfile?.role === 'agent' &&
+      staffProfile.active &&
+      staffProfile.allocatedDealershipId
+  );
+
+  const canAccessPortal = isAdmin || isSalesAgent;
+  const allocatedBranchId: DealershipId | null = isSalesAgent
+    ? staffProfile?.allocatedDealershipId ?? null
+    : null;
+  const requiresPasswordSetup = Boolean(
+    canAccessPortal && staffProfile?.mustChangePassword === true
+  );
+  const isDeactivatedStaff = Boolean(
+    user && !isBootstrappedOrRosterAdmin && staffProfile && !staffProfile.active
+  );
+
+  // Real-time Firestore listeners (admins get full group access; agents get public + own branch)
   useEffect(() => {
     if (!authReady) return;
 
-    const vehiclesQuery = isAdmin
-      ? collection(db, 'vehicles')
-      : query(collection(db, 'vehicles'), where('status', '==', 'available'));
-
-    const promotionsQuery = isAdmin
-      ? collection(db, 'promotions')
-      : query(collection(db, 'promotions'), where('active', '==', true));
-
-    const newsQuery = isAdmin
-      ? collection(db, 'news')
-      : query(collection(db, 'news'), where('archived', '==', false));
-
-    const unsubVehicles = onSnapshot(
-      vehiclesQuery,
-      (snap) => {
-        const rows = snap.docs.map((d) => d.data() as CmsVehicle);
-        setDbVehicles(rows);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
-    );
-
-    const unsubPromotions = onSnapshot(
-      promotionsQuery,
-      (snap) => {
-        const rows = snap.docs.map((d) => d.data() as CmsPromotion);
-        setDbPromotions(rows);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'promotions')
-    );
-
-    const unsubNews = onSnapshot(
-      newsQuery,
-      (snap) => {
-        setDbNews(snap.docs.map((d) => d.data() as CmsNewsArticle));
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'news')
-    );
-
-    let unsubLeads = () => {};
     if (isAdmin) {
-      unsubLeads = onSnapshot(
+      const unsubVehicles = onSnapshot(
+        collection(db, 'vehicles'),
+        (snap) => {
+          setDbVehicles(snap.docs.map((d) => d.data() as CmsVehicle));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
+      );
+
+      const unsubPromotions = onSnapshot(
+        collection(db, 'promotions'),
+        (snap) => {
+          setDbPromotions(snap.docs.map((d) => d.data() as CmsPromotion));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions')
+      );
+
+      const unsubNews = onSnapshot(
+        collection(db, 'news'),
+        (snap) => {
+          setDbNews(snap.docs.map((d) => d.data() as CmsNewsArticle));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'news')
+      );
+
+      const unsubLeads = onSnapshot(
         collection(db, 'leads'),
         (snap) => {
           setLeads(snap.docs.map((d) => d.data() as CmsLeadSubmission));
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'leads')
       );
-    } else {
-      setLeads([]);
+
+      const unsubStaff = onSnapshot(
+        collection(db, 'staffUsers'),
+        (snap) => {
+          const rows = snap.docs.map((d) => d.data() as StaffUserProfile);
+          rows.sort((a, b) => a.fullName.localeCompare(b.fullName));
+          setStaffUsers(rows);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'staffUsers')
+      );
+
+      return () => {
+        unsubVehicles();
+        unsubPromotions();
+        unsubNews();
+        unsubLeads();
+        unsubStaff();
+      };
     }
+
+    setLeads([]);
+    setStaffUsers([]);
+
+    const unsubNews = onSnapshot(
+      query(collection(db, 'news'), where('archived', '==', false)),
+      (snap) => {
+        setDbNews(snap.docs.map((d) => d.data() as CmsNewsArticle));
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'news')
+    );
+
+    if (isSalesAgent && allocatedBranchId) {
+      let publicVehicles: CmsVehicle[] = [];
+      let branchVehicles: CmsVehicle[] = [];
+      const syncMergedVehicles = () => {
+        const merged = new Map<string, CmsVehicle>();
+        for (const v of publicVehicles) merged.set(v.id, v);
+        for (const v of branchVehicles) merged.set(v.id, v);
+        setDbVehicles(Array.from(merged.values()));
+      };
+
+      const unsubPublicVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('status', '==', 'available')),
+        (snap) => {
+          publicVehicles = snap.docs.map((d) => d.data() as CmsVehicle);
+          syncMergedVehicles();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles/public')
+      );
+
+      const unsubBranchVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('homeDealershipId', '==', allocatedBranchId)),
+        (snap) => {
+          branchVehicles = snap.docs.map((d) => d.data() as CmsVehicle);
+          syncMergedVehicles();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `vehicles/branch-${allocatedBranchId}`)
+      );
+
+      let publicPromos: CmsPromotion[] = [];
+      let branchPromos: CmsPromotion[] = [];
+      const syncMergedPromos = () => {
+        const merged = new Map<string, CmsPromotion>();
+        for (const p of publicPromos) merged.set(p.id, p);
+        for (const p of branchPromos) merged.set(p.id, p);
+        setDbPromotions(Array.from(merged.values()));
+      };
+
+      const unsubPublicPromos = onSnapshot(
+        query(collection(db, 'promotions'), where('active', '==', true)),
+        (snap) => {
+          publicPromos = snap.docs.map((d) => d.data() as CmsPromotion);
+          syncMergedPromos();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions/public')
+      );
+
+      const unsubBranchPromos = onSnapshot(
+        query(
+          collection(db, 'promotions'),
+          where('scope', '==', 'BRANCH'),
+          where('dealershipId', '==', allocatedBranchId)
+        ),
+        (snap) => {
+          branchPromos = snap.docs.map((d) => d.data() as CmsPromotion);
+          syncMergedPromos();
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `promotions/branch-${allocatedBranchId}`)
+      );
+
+      return () => {
+        unsubPublicVehicles();
+        unsubBranchVehicles();
+        unsubPublicPromos();
+        unsubBranchPromos();
+        unsubNews();
+      };
+    }
+
+    const unsubVehicles = onSnapshot(
+      query(collection(db, 'vehicles'), where('status', '==', 'available')),
+      (snap) => {
+        setDbVehicles(snap.docs.map((d) => d.data() as CmsVehicle));
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
+    );
+
+    const unsubPromotions = onSnapshot(
+      query(collection(db, 'promotions'), where('active', '==', true)),
+      (snap) => {
+        setDbPromotions(snap.docs.map((d) => d.data() as CmsPromotion));
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'promotions')
+    );
 
     return () => {
       unsubVehicles();
       unsubPromotions();
       unsubNews();
-      unsubLeads();
     };
-  }, [authReady, isAdmin]);
+  }, [authReady, isAdmin, isSalesAgent, allocatedBranchId]);
 
   const seedCatalogToFirestore = useCallback(async () => {
     if (!user || !isAdmin) return;
@@ -450,7 +640,110 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     }
   }, []);
 
+  const signInWithStaffCredentials = useCallback(async (email: string, password: string) => {
+    setAuthError(null);
+    const cleanedEmail = email.trim().toLowerCase();
+    if (!cleanedEmail || !password) {
+      const msg = 'Please enter both your work email address and password.';
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+    try {
+      await signInWithEmailAndPassword(auth, cleanedEmail, password);
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? '';
+      let msg = 'Unable to sign in with those credentials.';
+      if (code === 'auth/operation-not-allowed') {
+        msg =
+          'Email/Password sign-in is not yet enabled in Firebase Console (Authentication → Sign-in method → Email/Password).';
+      } else if (
+        code === 'auth/invalid-credential' ||
+        code === 'auth/wrong-password' ||
+        code === 'auth/user-not-found'
+      ) {
+        msg = 'Invalid work email or password. Please verify your details or ask your Administrator.';
+      } else if (code === 'auth/too-many-requests') {
+        msg = 'Too many failed sign-in attempts. Please wait a few minutes and try again.';
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+  }, []);
+
+  const sendStaffPasswordReset = useCallback(async (email: string) => {
+    setAuthError(null);
+    const cleanedEmail = email.trim().toLowerCase();
+    if (!cleanedEmail) {
+      const msg = 'Enter your work email address first to receive a password reset link.';
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+    try {
+      await sendPasswordResetEmail(auth, cleanedEmail);
+    } catch (err) {
+      const code = (err as { code?: string })?.code ?? '';
+      const msg =
+        code === 'auth/operation-not-allowed'
+          ? 'Email/Password sign-in must be enabled in Firebase Console before password resets can be sent.'
+          : err instanceof Error
+          ? err.message
+          : 'Unable to send password reset email.';
+      setAuthError(msg);
+      throw new Error(msg);
+    }
+  }, []);
+
+  const completeInitialPasswordSetup = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      if (!user || !user.email) {
+        throw new Error('Active staff sign-in session is required.');
+      }
+      if (newPassword.length < 8) {
+        throw new Error('Your new password must be at least 8 characters long.');
+      }
+      if (newPassword === currentPassword) {
+        throw new Error('Please choose a new password that differs from your temporary password.');
+      }
+
+      try {
+        const credential = EmailAuthProvider.credential(user.email, currentPassword);
+        await reauthenticateWithCredential(user, credential);
+        await updatePassword(user, newPassword);
+      } catch (err) {
+        const code = (err as { code?: string })?.code ?? '';
+        if (
+          code === 'auth/invalid-credential' ||
+          code === 'auth/wrong-password'
+        ) {
+          throw new Error(
+            'Your current temporary password is incorrect. Please check the password issued by your Administrator.'
+          );
+        }
+        if (code === 'auth/weak-password') {
+          throw new Error('Password is too weak. Use at least 8 characters with letters and numbers.');
+        }
+        throw err instanceof Error
+          ? err
+          : new Error('Unable to update your password right now.');
+      }
+
+      try {
+        await updateDoc(doc(db, 'staffUsers', user.uid), {
+          mustChangePassword: false,
+          updatedAt: serverTimestamp(),
+          updatedBy: user.uid,
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `staffUsers/${user.uid}`);
+      }
+    },
+    [user]
+  );
+
   const signOutAdmin = useCallback(async () => {
+    setAuthError(null);
     await signOut(auth);
   }, []);
 
@@ -458,8 +751,26 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     async (
       vehicle: Omit<CmsVehicle, 'createdAt' | 'updatedAt' | 'updatedBy'> & { createdAt?: unknown }
     ) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
       const id = sanitizeId(vehicle.id, 'veh');
+      const existingVehicle = (dbVehicles ?? []).find((v) => v.id === id);
+
+      if (isSalesAgent) {
+        if (!allocatedBranchId) {
+          throw new Error('No allocated dealership found for your agent profile.');
+        }
+        if (
+          existingVehicle &&
+          (existingVehicle.homeDealershipId !== allocatedBranchId ||
+            existingVehicle.source === 'autotrader' ||
+            existingVehicle.id.startsWith('at_'))
+        ) {
+          throw new Error(
+            'Car Sales Agents can only edit manually added vehicles for their allocated dealership.'
+          );
+        }
+      }
+
       const cleanedImages = (vehicle.images ?? [])
         .map((url) => url.trim().slice(0, 500))
         .filter((url) => url.length >= 5)
@@ -468,6 +779,15 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       if (cleanedImages.length === 0) {
         throw new Error('At least one valid vehicle image URL is required.');
       }
+
+      const targetHomeBranchId: DealershipId = isSalesAgent
+        ? allocatedBranchId!
+        : vehicle.homeDealershipId;
+      const effectiveSource = isSalesAgent
+        ? 'manual'
+        : vehicle.source === 'autotrader'
+        ? 'autotrader'
+        : 'manual';
 
       const payload: Record<string, unknown> = {
         id,
@@ -486,10 +806,10 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         fuelEconomy: (vehicle.fuelEconomy || '').trim().slice(0, 40) || 'VW Spec',
         colour: vehicle.colour.trim().slice(0, 60) || 'Pure White',
         images: cleanedImages,
-        homeDealershipId: vehicle.homeDealershipId,
+        homeDealershipId: targetHomeBranchId,
         status: vehicle.status,
-        source: vehicle.source === 'autotrader' ? 'autotrader' : 'manual',
-        createdAt: vehicle.createdAt ?? serverTimestamp(),
+        source: effectiveSource,
+        createdAt: existingVehicle?.createdAt ?? vehicle.createdAt ?? serverTimestamp(),
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
       };
@@ -503,16 +823,16 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
           .trim()
           .slice(0, 40);
       }
-      if (vehicle.externalListingId) {
+      if (!isSalesAgent && vehicle.externalListingId) {
         payload.externalListingId = vehicle.externalListingId.trim().slice(0, 60);
       }
-      if (vehicle.dealerId) {
+      if (!isSalesAgent && vehicle.dealerId) {
         payload.dealerId = vehicle.dealerId.trim().slice(0, 30);
       }
-      if (vehicle.canonicalUrl) {
+      if (!isSalesAgent && vehicle.canonicalUrl) {
         payload.canonicalUrl = vehicle.canonicalUrl.trim().slice(0, 400);
       }
-      if (vehicle.lastSyncedAt) {
+      if (!isSalesAgent && vehicle.lastSyncedAt) {
         payload.lastSyncedAt = vehicle.lastSyncedAt;
       }
 
@@ -522,19 +842,32 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `vehicles/${id}`);
       }
     },
-    [user, isAdmin]
+    [user, canAccessPortal, isSalesAgent, allocatedBranchId, dbVehicles]
   );
 
   const deleteVehicle = useCallback(
     async (id: string) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
+      if (isSalesAgent) {
+        const target = (dbVehicles ?? []).find((v) => v.id === id);
+        if (
+          !target ||
+          target.homeDealershipId !== allocatedBranchId ||
+          target.source === 'autotrader' ||
+          target.id.startsWith('at_')
+        ) {
+          throw new Error(
+            'Car Sales Agents can only remove manual vehicles belonging to their allocated dealership.'
+          );
+        }
+      }
       try {
         await deleteDoc(doc(db, 'vehicles', id));
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `vehicles/${id}`);
       }
     },
-    [user, isAdmin]
+    [user, canAccessPortal, isSalesAgent, allocatedBranchId, dbVehicles]
   );
 
   const clearManualVehicles = useCallback(async (): Promise<number> => {
@@ -832,19 +1165,39 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
 
   const savePromotion = useCallback(
     async (promo: Omit<CmsPromotion, 'updatedAt' | 'updatedBy'>) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
       if (!ISO_DATE_RE.test(promo.validUntil)) {
         throw new Error('Valid Until date must use YYYY-MM-DD format.');
       }
       const id = sanitizeId(promo.id, 'promo');
       const isExpired = promo.validUntil < todayISO;
-      const scope = promo.scope === 'BRANCH' ? 'BRANCH' : 'MASTER';
-      const dealershipId = scope === 'MASTER' ? null : promo.dealershipId ?? '1';
+
+      if (isSalesAgent) {
+        if (!allocatedBranchId) {
+          throw new Error('No allocated dealership found for your agent profile.');
+        }
+        if (promo.type === 'competition') {
+          throw new Error('Car Sales Agents can only publish Specials and Events for their branch.');
+        }
+      }
+
+      const scope = isSalesAgent
+        ? 'BRANCH'
+        : promo.scope === 'BRANCH'
+        ? 'BRANCH'
+        : 'MASTER';
+      const dealershipId = isSalesAgent
+        ? allocatedBranchId!
+        : scope === 'MASTER'
+        ? null
+        : promo.dealershipId ?? '1';
+      const promoType =
+        isSalesAgent && promo.type === 'competition' ? 'special' : promo.type;
 
       const payload = {
         id,
         title: promo.title.trim().slice(0, 160),
-        type: promo.type,
+        type: promoType,
         description: promo.description.trim().slice(0, 1000),
         imageUrl: promo.imageUrl.trim().slice(0, 500),
         validUntil: promo.validUntil,
@@ -865,14 +1218,24 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `promotions/${id}`);
       }
     },
-    [user, isAdmin, todayISO]
+    [user, canAccessPortal, isSalesAgent, allocatedBranchId, todayISO]
   );
 
   const archivePromotion = useCallback(
     async (id: string) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
       const target = allPromotions.find((p) => p.id === id);
       if (!target) return;
+      if (
+        isSalesAgent &&
+        (target.scope !== 'BRANCH' ||
+          target.dealershipId !== allocatedBranchId ||
+          (target.type !== 'special' && target.type !== 'event'))
+      ) {
+        throw new Error(
+          'Car Sales Agents can only archive specials and events belonging to their allocated dealership.'
+        );
+      }
       try {
         await setDoc(doc(db, 'promotions', id), {
           ...target,
@@ -884,17 +1247,27 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.UPDATE, `promotions/${id}`);
       }
     },
-    [user, isAdmin, allPromotions]
+    [user, canAccessPortal, isSalesAgent, allocatedBranchId, allPromotions]
   );
 
   const reactivatePromotion = useCallback(
     async (id: string, newValidUntil: string) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
       if (!ISO_DATE_RE.test(newValidUntil) || newValidUntil < todayISO) {
         throw new Error(`New expiry date must be on or after ${todayISO}.`);
       }
       const target = allPromotions.find((p) => p.id === id);
       if (!target) return;
+      if (
+        isSalesAgent &&
+        (target.scope !== 'BRANCH' ||
+          target.dealershipId !== allocatedBranchId ||
+          (target.type !== 'special' && target.type !== 'event'))
+      ) {
+        throw new Error(
+          'Car Sales Agents can only reactivate specials and events belonging to their allocated dealership.'
+        );
+      }
       autoArchivedIdsRef.current.delete(`promo:${id}:${newValidUntil}`);
       try {
         await setDoc(doc(db, 'promotions', id), {
@@ -908,19 +1281,32 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.UPDATE, `promotions/${id}`);
       }
     },
-    [user, isAdmin, todayISO, allPromotions]
+    [user, canAccessPortal, isSalesAgent, allocatedBranchId, todayISO, allPromotions]
   );
 
   const deletePromotion = useCallback(
     async (id: string) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
+      if (isSalesAgent) {
+        const target = allPromotions.find((p) => p.id === id);
+        if (
+          !target ||
+          target.scope !== 'BRANCH' ||
+          target.dealershipId !== allocatedBranchId ||
+          (target.type !== 'special' && target.type !== 'event')
+        ) {
+          throw new Error(
+            'Car Sales Agents can only delete specials and events belonging to their allocated dealership.'
+          );
+        }
+      }
       try {
         await deleteDoc(doc(db, 'promotions', id));
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `promotions/${id}`);
       }
     },
-    [user, isAdmin]
+    [user, canAccessPortal, isSalesAgent, allocatedBranchId, allPromotions]
   );
 
   const saveNews = useCallback(
@@ -1022,13 +1408,219 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     [activeDealershipId]
   );
 
+  const createStaffUser = useCallback(
+    async (input: {
+      fullName: string;
+      phone: string;
+      email: string;
+      role: StaffRole;
+      allocatedDealershipId: DealershipId | null;
+      defaultPassword: string;
+    }): Promise<StaffUserProfile> => {
+      if (!user || !isAdmin) {
+        throw new Error('Only Administrators can add staff users.');
+      }
+      const fullName = input.fullName.trim().slice(0, 120);
+      const phone = input.phone.trim().slice(0, 30);
+      const email = input.email.trim().toLowerCase().slice(0, 140);
+      const defaultPassword = input.defaultPassword;
+
+      if (fullName.length < 2) {
+        throw new Error('Full name must be at least 2 characters.');
+      }
+      if (phone.length < 7) {
+        throw new Error('Please enter a valid contact phone number (at least 7 digits).');
+      }
+      if (email.length < 5 || !email.includes('@')) {
+        throw new Error('Please enter a valid work email address.');
+      }
+      if (defaultPassword.length < 8) {
+        throw new Error('Default password must be at least 8 characters long.');
+      }
+      if (input.role === 'agent' && !input.allocatedDealershipId) {
+        throw new Error('Please select an allocated dealership for this Car Sales Agent.');
+      }
+
+      const assignedBranch: DealershipId | null =
+        input.role === 'agent'
+          ? input.allocatedDealershipId ?? '1'
+          : input.allocatedDealershipId;
+
+      const provAuth = getProvisionerAuth();
+      let createdUid = '';
+      try {
+        const cred = await createUserWithEmailAndPassword(provAuth, email, defaultPassword);
+        createdUid = cred.user.uid;
+        await updateProfile(cred.user, { displayName: fullName }).catch(() => {});
+      } catch (err) {
+        const code = (err as { code?: string })?.code ?? '';
+        if (code === 'auth/operation-not-allowed') {
+          throw new Error(
+            'Email/Password sign-in is disabled in Firebase Console. Enable Authentication → Sign-in method → Email/Password first, then try again.'
+          );
+        }
+        if (code === 'auth/email-already-in-use') {
+          throw new Error(`A Firebase account already exists for ${email}.`);
+        }
+        if (code === 'auth/invalid-email') {
+          throw new Error('Invalid work email format.');
+        }
+        if (code === 'auth/weak-password') {
+          throw new Error('Default password is too weak. Use 8+ mixed characters.');
+        }
+        throw err instanceof Error
+          ? err
+          : new Error('Unable to create Firebase Authentication user.');
+      } finally {
+        await signOut(provAuth).catch(() => {});
+      }
+
+      const staffDocPayload = {
+        uid: createdUid,
+        fullName,
+        phone,
+        email,
+        role: input.role,
+        allocatedDealershipId: assignedBranch,
+        mustChangePassword: true,
+        active: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: user.uid,
+        updatedBy: user.uid,
+      };
+
+      try {
+        await setDoc(doc(db, 'staffUsers', createdUid), staffDocPayload);
+        if (input.role === 'admin') {
+          await setDoc(doc(db, 'admins', createdUid), {
+            uid: createdUid,
+            email,
+            role: 'admin',
+            addedAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `staffUsers/${createdUid}`);
+      }
+
+      return {
+        uid: createdUid,
+        fullName,
+        phone,
+        email,
+        role: input.role,
+        allocatedDealershipId: assignedBranch,
+        mustChangePassword: true,
+        active: true,
+        createdBy: user.uid,
+        updatedBy: user.uid,
+      };
+    },
+    [user, isAdmin]
+  );
+
+  const updateStaffUser = useCallback(
+    async (
+      uid: string,
+      updates: {
+        fullName: string;
+        phone: string;
+        role: StaffRole;
+        allocatedDealershipId: DealershipId | null;
+        active: boolean;
+      }
+    ) => {
+      if (!user || !isAdmin) {
+        throw new Error('Only Administrators can update staff user permissions.');
+      }
+      const existingStaff = staffUsers.find((s) => s.uid === uid);
+      if (!existingStaff) {
+        throw new Error('Staff profile not found.');
+      }
+
+      const fullName = updates.fullName.trim().slice(0, 120);
+      const phone = updates.phone.trim().slice(0, 30);
+      if (fullName.length < 2) {
+        throw new Error('Full name must be at least 2 characters.');
+      }
+      if (phone.length < 7) {
+        throw new Error('Phone number must be at least 7 characters.');
+      }
+      if (updates.role === 'agent' && !updates.allocatedDealershipId) {
+        throw new Error('Car Sales Agents must be assigned to a dealership.');
+      }
+      if (uid === user.uid && (!updates.active || updates.role !== 'admin')) {
+        throw new Error('You cannot suspend or demote your own active Administrator session.');
+      }
+
+      const assignedBranch =
+        updates.role === 'agent'
+          ? updates.allocatedDealershipId ?? '1'
+          : updates.allocatedDealershipId;
+
+      try {
+        await updateDoc(doc(db, 'staffUsers', uid), {
+          fullName,
+          phone,
+          role: updates.role,
+          allocatedDealershipId: assignedBranch,
+          active: updates.active,
+          updatedAt: serverTimestamp(),
+          updatedBy: user.uid,
+        });
+
+        if (updates.role === 'admin' && updates.active) {
+          await setDoc(doc(db, 'admins', uid), {
+            uid,
+            email: existingStaff.email,
+            role: 'admin',
+            addedAt: serverTimestamp(),
+          });
+        } else {
+          await deleteDoc(doc(db, 'admins', uid)).catch(() => {});
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `staffUsers/${uid}`);
+      }
+    },
+    [user, isAdmin, staffUsers]
+  );
+
+  const removeStaffUser = useCallback(
+    async (uid: string) => {
+      if (!user || !isAdmin) {
+        throw new Error('Only Administrators can remove staff users.');
+      }
+      if (uid === user.uid) {
+        throw new Error('You cannot remove your own currently signed-in account.');
+      }
+      try {
+        await deleteDoc(doc(db, 'staffUsers', uid));
+        await deleteDoc(doc(db, 'admins', uid)).catch(() => {});
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `staffUsers/${uid}`);
+      }
+    },
+    [user, isAdmin]
+  );
+
   const value: DealershipDataContextValue = {
     todayISO,
     user,
     authReady,
     isAdmin,
+    isSalesAgent,
+    canAccessPortal,
+    allocatedBranchId,
+    staffProfile,
+    requiresPasswordSetup,
+    isDeactivatedStaff,
     authError,
     signInAdmin,
+    signInWithStaffCredentials,
+    sendStaffPasswordReset,
+    completeInitialPasswordSetup,
     signOutAdmin,
     loadingCatalog,
     usingFallbackSeed,
@@ -1043,6 +1635,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     archivedPromotions,
     allNews,
     leads,
+    staffUsers,
     seedCatalogToFirestore,
     seedAllDefaultData,
     saveVehicle,
@@ -1058,6 +1651,9 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     deleteNews,
     updateLeadStatus,
     deleteLead,
+    createStaffUser,
+    updateStaffUser,
+    removeStaffUser,
     submitLead,
   };
 

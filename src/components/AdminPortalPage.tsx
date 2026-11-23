@@ -4,16 +4,23 @@ import {
   Archive,
   Building2,
   Car,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   Database,
   Edit3,
   ExternalLink,
+  Eye,
+  EyeOff,
   Globe,
   Inbox,
+  KeyRound,
   LayoutDashboard,
+  Lock,
   LogIn,
   LogOut,
+  Mail,
   MapPin,
   Newspaper,
   Plus,
@@ -21,10 +28,13 @@ import {
   RotateCcw,
   Save,
   Search,
+  Shield,
   ShieldAlert,
   Sparkles,
   Trash2,
   Upload,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
@@ -40,12 +50,54 @@ import {
   DealershipRecord,
   PromotionScope,
   PromotionType,
+  StaffRole,
+  StaffUserProfile,
   VehicleStatus,
 } from '../types/dealership';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
-type AdminTab = 'overview' | 'vehicles' | 'promotions' | 'branches' | 'news' | 'leads';
+type AdminTab =
+  | 'overview'
+  | 'vehicles'
+  | 'promotions'
+  | 'users'
+  | 'branches'
+  | 'news'
+  | 'leads';
 type VisibilityChoice = 'MASTER' | DealershipId;
+
+function generateSecureRandomPassword(length = 12): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghjkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%&*?';
+  const all = upper + lower + digits + symbols;
+
+  const pick = (pool: string, byte: number) => pool[byte % pool.length];
+  const bytes = new Uint32Array(Math.max(length, 12));
+  window.crypto.getRandomValues(bytes);
+
+  const chars: string[] = [
+    pick(upper, bytes[0]),
+    pick(lower, bytes[1]),
+    pick(digits, bytes[2]),
+    pick(symbols, bytes[3]),
+  ];
+  for (let i = 4; i < length; i += 1) {
+    chars.push(pick(all, bytes[i]));
+  }
+
+  // Fisher-Yates shuffle with crypto randomness
+  const shuffleBytes = new Uint32Array(chars.length);
+  window.crypto.getRandomValues(shuffleBytes);
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = shuffleBytes[i] % (i + 1);
+    const tmp = chars[i];
+    chars[i] = chars[j];
+    chars[j] = tmp;
+  }
+  return chars.join('');
+}
 
 function formatSyncTimestamp(value: unknown): string {
   if (!value) return '—';
@@ -152,8 +204,17 @@ export function AdminPortalPage() {
     user,
     authReady,
     isAdmin,
+    isSalesAgent,
+    canAccessPortal,
+    allocatedBranchId,
+    staffProfile,
+    requiresPasswordSetup,
+    isDeactivatedStaff,
     authError,
     signInAdmin,
+    signInWithStaffCredentials,
+    sendStaffPasswordReset,
+    completeInitialPasswordSetup,
     signOutAdmin,
     activeVehicles,
     allVehicles,
@@ -162,6 +223,7 @@ export function AdminPortalPage() {
     archivedPromotions,
     allNews,
     leads,
+    staffUsers,
     usingFallbackSeed,
     seedAllDefaultData,
     saveVehicle,
@@ -177,6 +239,9 @@ export function AdminPortalPage() {
     deleteNews,
     updateLeadStatus,
     deleteLead,
+    createStaffUser,
+    updateStaffUser,
+    removeStaffUser,
   } = useDealershipData();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
@@ -188,7 +253,40 @@ export function AdminPortalPage() {
   const [leadBranchFilter, setLeadBranchFilter] = useState<'All' | DealershipId>('All');
 
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState(false);
+
+  // Staff sign-in & first-login password setup state
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+  const [signingInStaff, setSigningInStaff] = useState(false);
+
+  const [setupCurrentPassword, setSetupCurrentPassword] = useState('');
+  const [setupNewPassword, setSetupNewPassword] = useState('');
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
+  const [showSetupPasswords, setShowSetupPasswords] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [savingPasswordSetup, setSavingPasswordSetup] = useState(false);
+
+  // Staff User Management modal state (Admin-only)
+  const [showCreateStaffModal, setShowCreateStaffModal] = useState(false);
+  const [newStaffFullName, setNewStaffFullName] = useState('');
+  const [newStaffPhone, setNewStaffPhone] = useState('');
+  const [newStaffEmail, setNewStaffEmail] = useState('');
+  const [newStaffRole, setNewStaffRole] = useState<StaffRole>('agent');
+  const [newStaffBranchId, setNewStaffBranchId] = useState<DealershipId>(activeDealership.id);
+  const [newStaffPassword, setNewStaffPassword] = useState(() => generateSecureRandomPassword(12));
+  const [staffModalError, setStaffModalError] = useState<string | null>(null);
+  const [createdStaffReceipt, setCreatedStaffReceipt] = useState<{
+    profile: StaffUserProfile;
+    temporaryPassword: string;
+  } | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const [editingStaffUser, setEditingStaffUser] = useState<StaffUserProfile | null>(null);
+  const [confirmRemoveStaffUid, setConfirmRemoveStaffUid] = useState<string | null>(null);
 
   // AutoTrader Sync & JSON Import state
   const [syncingAutoTrader, setSyncingAutoTrader] = useState(false);
@@ -225,29 +323,90 @@ export function AdminPortalPage() {
     setBranchDraft(dealershipsById[selectedBranchId]);
   }, [selectedBranchId, dealershipsById]);
 
+  // Lock Car Sales Agents onto their allocated branch and permitted tabs
+  useEffect(() => {
+    if (!isSalesAgent || !allocatedBranchId) return;
+    if (activeDealership.id !== allocatedBranchId) {
+      switchPreviewBranch(allocatedBranchId);
+    }
+    setVehicleBranchFilter(allocatedBranchId);
+    setPromoScopeFilter(allocatedBranchId);
+    if (activeTab !== 'overview' && activeTab !== 'vehicles' && activeTab !== 'promotions') {
+      setActiveTab('overview');
+    }
+  }, [isSalesAgent, allocatedBranchId, activeDealership.id, activeTab, switchPreviewBranch]);
+
   const showFlash = (msg: string) => {
+    setActionError(null);
     setStatusNotice(msg);
     window.setTimeout(() => setStatusNotice(null), 5000);
   };
 
+  const copyText = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      window.setTimeout(() => setCopiedKey(null), 2500);
+    } catch {
+      // Fallback ignored if clipboard permissions restricted
+    }
+  };
+
+  const allocatedBranch = allocatedBranchId ? dealershipsById[allocatedBranchId] : null;
+
+  const scopedVehicles = useMemo(() => {
+    if (isSalesAgent && allocatedBranchId) {
+      return allVehicles.filter((v) => v.homeDealershipId === allocatedBranchId);
+    }
+    return allVehicles;
+  }, [allVehicles, isSalesAgent, allocatedBranchId]);
+
+  const scopedPromotions = useMemo(() => {
+    if (isSalesAgent && allocatedBranchId) {
+      return allPromotions.filter(
+        (p) =>
+          p.scope === 'BRANCH' &&
+          p.dealershipId === allocatedBranchId &&
+          (p.type === 'special' || p.type === 'event')
+      );
+    }
+    return allPromotions;
+  }, [allPromotions, isSalesAgent, allocatedBranchId]);
+
+  const scopedArchivedPromotions = useMemo(() => {
+    if (isSalesAgent && allocatedBranchId) {
+      return archivedPromotions.filter(
+        (p) =>
+          p.scope === 'BRANCH' &&
+          p.dealershipId === allocatedBranchId &&
+          (p.type === 'special' || p.type === 'event')
+      );
+    }
+    return archivedPromotions;
+  }, [archivedPromotions, isSalesAgent, allocatedBranchId]);
+
   const livePromotionsList = useMemo(
     () =>
-      allPromotions
+      scopedPromotions
         .filter((p) => p.active && p.validUntil >= todayISO)
         .sort((a, b) => a.validUntil.localeCompare(b.validUntil)),
-    [allPromotions, todayISO]
+    [scopedPromotions, todayISO]
   );
 
   const manualVehiclesCount = useMemo(
     () =>
-      allVehicles.filter((v) => v.source !== 'autotrader' && !v.id.startsWith('at_')).length,
-    [allVehicles]
+      scopedVehicles.filter((v) => v.source !== 'autotrader' && !v.id.startsWith('at_')).length,
+    [scopedVehicles]
   );
 
   const filteredVehicles = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return allVehicles.filter((v) => {
-      if (vehicleBranchFilter !== 'All' && v.homeDealershipId !== vehicleBranchFilter) {
+    return scopedVehicles.filter((v) => {
+      if (
+        !isSalesAgent &&
+        vehicleBranchFilter !== 'All' &&
+        v.homeDealershipId !== vehicleBranchFilter
+      ) {
         return false;
       }
       if (!q) return true;
@@ -258,20 +417,22 @@ export function AdminPortalPage() {
         v.status.toLowerCase().includes(q)
       );
     });
-  }, [allVehicles, vehicleBranchFilter, searchQuery]);
+  }, [scopedVehicles, isSalesAgent, vehicleBranchFilter, searchQuery]);
 
   const filteredPromotions = useMemo(() => {
-    const base = promoSubTab === 'active' ? livePromotionsList : archivedPromotions;
+    const base = promoSubTab === 'active' ? livePromotionsList : scopedArchivedPromotions;
     const q = searchQuery.trim().toLowerCase();
     return base.filter((p) => {
       if (promoTypeFilter !== 'all' && p.type !== promoTypeFilter) return false;
-      if (promoScopeFilter === 'MASTER' && p.scope !== 'MASTER') return false;
-      if (
-        promoScopeFilter !== 'all' &&
-        promoScopeFilter !== 'MASTER' &&
-        (p.scope !== 'BRANCH' || p.dealershipId !== promoScopeFilter)
-      ) {
-        return false;
+      if (!isSalesAgent) {
+        if (promoScopeFilter === 'MASTER' && p.scope !== 'MASTER') return false;
+        if (
+          promoScopeFilter !== 'all' &&
+          promoScopeFilter !== 'MASTER' &&
+          (p.scope !== 'BRANCH' || p.dealershipId !== promoScopeFilter)
+        ) {
+          return false;
+        }
       }
       if (!q) return true;
       return (
@@ -283,8 +444,9 @@ export function AdminPortalPage() {
   }, [
     promoSubTab,
     livePromotionsList,
-    archivedPromotions,
+    scopedArchivedPromotions,
     promoTypeFilter,
+    isSalesAgent,
     promoScopeFilter,
     searchQuery,
   ]);
@@ -298,6 +460,19 @@ export function AdminPortalPage() {
         n.category.toLowerCase().includes(q)
     );
   }, [allNews, searchQuery]);
+
+  const filteredStaffUsers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return staffUsers.filter((s) => {
+      if (!q) return true;
+      return (
+        s.fullName.toLowerCase().includes(q) ||
+        s.email.toLowerCase().includes(q) ||
+        s.phone.toLowerCase().includes(q) ||
+        s.role.toLowerCase().includes(q)
+      );
+    });
+  }, [staffUsers, searchQuery]);
 
   const sortedLeads = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -321,36 +496,46 @@ export function AdminPortalPage() {
     return (
       <div className="min-h-[75vh] bg-[#F8FAFC] pt-28 pb-20 flex items-center justify-center px-4">
         <div className="rounded-xl border border-[#E2E8F0] bg-white px-8 py-6 text-sm text-[#475569]">
-          Verifying {GROUP_CORPORATE_INFO.legalEntity} administrator session...
+          Verifying {GROUP_CORPORATE_INFO.legalEntity} staff session...
         </div>
       </div>
     );
   }
 
-  if (!user || !isAdmin) {
+  if (!user || !canAccessPortal) {
     return (
-      <div className="min-h-[80vh] bg-[#F8FAFC] pt-28 pb-20 flex items-center justify-center px-4">
+      <div className="min-h-[82vh] bg-[#F8FAFC] pt-28 pb-20 flex items-center justify-center px-4">
         <div className="max-w-md w-full rounded-2xl border border-[#E2E8F0] bg-white p-8 shadow-sm space-y-6">
           <div className="space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wider text-[#00437A]">
               {GROUP_CORPORATE_INFO.legalEntity} · FSP {GROUP_CORPORATE_INFO.fspNumber}
             </p>
             <h1 className="font-display text-2xl font-semibold text-[#091224]">
-              Group Dealership Admin CMS
+              Dealership Staff &amp; Admin Portal
             </h1>
             <p className="text-sm leading-relaxed text-[#475569]">
-              Sign in to manage Master Group stock across Newcastle VW, Ermelo VW, and Vryheid VW, publish scoped promotions &amp; events, configure branch details, and review customer leads.
+              Sign in with your work email and password assigned by your Group Administrator, or use Administrator Google Sign-In.
             </p>
           </div>
 
-          {user && !isAdmin && (
+          {user && !canAccessPortal && (
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 space-y-2">
               <div className="flex items-center gap-2 font-semibold">
                 <ShieldAlert className="h-4 w-4 shrink-0 text-amber-700" />
-                <span>Account Not Authorized</span>
+                <span>
+                  {isDeactivatedStaff ? 'Staff Account Suspended' : 'Account Not Authorized'}
+                </span>
               </div>
               <p>
-                Signed in as <strong className="font-mono">{user.email}</strong>. Only authorized {GROUP_CORPORATE_INFO.legalEntity} administrators can modify dealership data.
+                {isDeactivatedStaff ? (
+                  <>
+                    Your staff profile (<strong className="font-mono">{user.email}</strong>) is currently suspended. Contact your Group Administrator to reactivate access.
+                  </>
+                ) : (
+                  <>
+                    Signed in as <strong className="font-mono">{user.email}</strong>. Only authorized {GROUP_CORPORATE_INFO.legalEntity} Administrators and Car Sales Agents can access this portal.
+                  </>
+                )}
               </p>
             </div>
           )}
@@ -361,24 +546,266 @@ export function AdminPortalPage() {
             </div>
           )}
 
-          <div className="space-y-3">
-            {!user ? (
-              <Button size="lg" className="w-full" onClick={() => void signInAdmin()}>
-                <LogIn className="h-4 w-4" />
-                <span>Sign in with Google</span>
-              </Button>
-            ) : (
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" onClick={() => void signOutAdmin()}>
-                  <LogOut className="h-4 w-4" />
-                  <span>Sign Out</span>
+          {loginNotice && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-900">
+              {loginNotice}
+            </div>
+          )}
+
+          {!user ? (
+            <div className="space-y-5">
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setSigningInStaff(true);
+                  setLoginNotice(null);
+                  try {
+                    await signInWithStaffCredentials(loginEmail, loginPassword);
+                  } catch {
+                    // Handled in context authError
+                  } finally {
+                    setSigningInStaff(false);
+                  }
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <Label htmlFor="staff-login-email">Work Email Address</Label>
+                  <Input
+                    id="staff-login-email"
+                    type="email"
+                    autoComplete="email"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="agent@newcastlevw.co.za"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="staff-login-password">Password</Label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setLoginNotice(null);
+                        try {
+                          await sendStaffPasswordReset(loginEmail);
+                          setLoginNotice(
+                            `Password reset instructions sent to ${loginEmail.trim().toLowerCase()}.`
+                          );
+                        } catch {
+                          // Handled in context authError
+                        }
+                      }}
+                      className="text-[11px] font-semibold text-[#00437A] hover:underline cursor-pointer"
+                    >
+                      Forgot / Reset Password
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="staff-login-password"
+                      type={showLoginPassword ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                      onClick={() => setShowLoginPassword((prev) => !prev)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#091224] cursor-pointer"
+                    >
+                      {showLoginPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <Button type="submit" size="lg" className="w-full" disabled={signingInStaff}>
+                  <KeyRound className="h-4 w-4" />
+                  <span>{signingInStaff ? 'Signing In...' : 'Sign In with Work Email'}</span>
                 </Button>
-                <Button className="flex-1" onClick={() => void signInAdmin()}>
-                  <span>Switch Account</span>
-                </Button>
+              </form>
+
+              <div className="relative flex items-center py-1">
+                <div className="flex-grow border-t border-[#E2E8F0]" />
+                <span className="mx-3 shrink text-[11px] font-medium uppercase tracking-wider text-[#64748B]">
+                  Or Group Admin SSO
+                </span>
+                <div className="flex-grow border-t border-[#E2E8F0]" />
               </div>
-            )}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                className="w-full"
+                onClick={() => void signInAdmin()}
+              >
+                <LogIn className="h-4 w-4" />
+                <span>Administrator Google Sign-In</span>
+              </Button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => void signOutAdmin()}>
+                <LogOut className="h-4 w-4" />
+                <span>Sign Out</span>
+              </Button>
+              <Button className="flex-1" onClick={() => void signInAdmin()}>
+                <span>Switch Google Account</span>
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Mandatory First-Login Password Configuration Gate
+  if (requiresPasswordSetup && staffProfile) {
+    const branchLabel = staffProfile.allocatedDealershipId
+      ? dealershipsById[staffProfile.allocatedDealershipId]?.name
+      : 'All Group Dealerships';
+
+    return (
+      <div className="min-h-[82vh] bg-[#F8FAFC] pt-28 pb-20 flex items-center justify-center px-4">
+        <div className="max-w-lg w-full rounded-2xl border border-[#E2E8F0] bg-white p-8 shadow-sm space-y-6">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-md bg-[#001E50]/5 px-3 py-1 text-xs font-semibold text-[#001E50]">
+              <Lock className="h-3.5 w-3.5" />
+              <span>First-Time Staff Password Setup</span>
+            </div>
+            <h1 className="font-display text-2xl font-semibold text-[#091224]">
+              Configure Your Personal Password
+            </h1>
+            <p className="text-sm leading-relaxed text-[#475569]">
+              Welcome, <strong className="text-[#091224]">{staffProfile.fullName}</strong>. Before entering the{' '}
+              <strong className="text-[#001E50]">{branchLabel}</strong> workspace, please replace the temporary password issued by your Administrator with your own private password.
+            </p>
           </div>
+
+          <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 text-xs text-[#334155] space-y-1">
+            <p>
+              <strong className="text-[#091224]">Work Email:</strong>{' '}
+              <span className="font-mono">{staffProfile.email}</span>
+            </p>
+            <p>
+              <strong className="text-[#091224]">Assigned Role:</strong>{' '}
+              {staffProfile.role === 'admin'
+                ? 'Administrator (Full Group Access)'
+                : `Car Sales Agent (${branchLabel})`}
+            </p>
+          </div>
+
+          {setupError && (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3.5 text-xs text-red-900">
+              {setupError}
+            </div>
+          )}
+
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setSetupError(null);
+              if (setupNewPassword.length < 8) {
+                setSetupError('Your new password must be at least 8 characters long.');
+                return;
+              }
+              if (setupNewPassword !== setupConfirmPassword) {
+                setSetupError('New password and confirmation do not match.');
+                return;
+              }
+              setSavingPasswordSetup(true);
+              try {
+                await completeInitialPasswordSetup(setupCurrentPassword, setupNewPassword);
+                setSetupCurrentPassword('');
+                setSetupNewPassword('');
+                setSetupConfirmPassword('');
+                showFlash('Your personal staff password is configured.');
+              } catch (err) {
+                setSetupError(
+                  err instanceof Error ? err.message : 'Unable to save new password.'
+                );
+              } finally {
+                setSavingPasswordSetup(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <Label htmlFor="setup-current-pw">Temporary Password (Provided by Admin) *</Label>
+              <Input
+                id="setup-current-pw"
+                type={showSetupPasswords ? 'text' : 'password'}
+                value={setupCurrentPassword}
+                onChange={(e) => setSetupCurrentPassword(e.target.value)}
+                placeholder="Enter your temporary password"
+                required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="setup-new-pw">Create New Password (Min 8 characters) *</Label>
+              <Input
+                id="setup-new-pw"
+                type={showSetupPasswords ? 'text' : 'password'}
+                value={setupNewPassword}
+                onChange={(e) => setSetupNewPassword(e.target.value)}
+                placeholder="Choose a strong private password"
+                minLength={8}
+                required
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="setup-confirm-pw">Confirm New Password *</Label>
+              <Input
+                id="setup-confirm-pw"
+                type={showSetupPasswords ? 'text' : 'password'}
+                value={setupConfirmPassword}
+                onChange={(e) => setSetupConfirmPassword(e.target.value)}
+                placeholder="Re-enter your new password"
+                minLength={8}
+                required
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-[#475569] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showSetupPasswords}
+                onChange={(e) => setShowSetupPasswords(e.target.checked)}
+              />
+              <span>Show passwords</span>
+            </label>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => void signOutAdmin()}
+                disabled={savingPasswordSetup}
+              >
+                <LogOut className="h-4 w-4" />
+                <span>Sign Out</span>
+              </Button>
+              <Button type="submit" disabled={savingPasswordSetup}>
+                <KeyRound className="h-4 w-4" />
+                <span>
+                  {savingPasswordSetup ? 'Updating Password...' : 'Save Password & Continue'}
+                </span>
+              </Button>
+            </div>
+          </form>
         </div>
       </div>
     );
@@ -394,34 +821,97 @@ export function AdminPortalPage() {
     }
   };
 
+  const navTabs = isAdmin
+    ? [
+        { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
+        {
+          id: 'vehicles' as const,
+          label: `Master Stock (${scopedVehicles.length})`,
+          icon: Car,
+        },
+        {
+          id: 'promotions' as const,
+          label: `Promotions & Events (${scopedPromotions.length})`,
+          icon: Sparkles,
+        },
+        {
+          id: 'users' as const,
+          label: `Users & Roles (${staffUsers.length})`,
+          icon: Users,
+        },
+        {
+          id: 'branches' as const,
+          label: 'Branch Settings (3)',
+          icon: Building2,
+        },
+        { id: 'news' as const, label: `News (${allNews.length})`, icon: Newspaper },
+        { id: 'leads' as const, label: `Leads (${leads.length})`, icon: Inbox },
+      ]
+    : [
+        { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
+        {
+          id: 'vehicles' as const,
+          label: `${allocatedBranch?.shortName ?? 'Branch'} Stock (${scopedVehicles.length})`,
+          icon: Car,
+        },
+        {
+          id: 'promotions' as const,
+          label: `Specials & Events (${scopedPromotions.length})`,
+          icon: Sparkles,
+        },
+      ];
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] pt-24 pb-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-8">
-        {/* Top Admin Header */}
+        {/* Top Portal Header */}
         <div className="flex flex-col gap-4 rounded-2xl border border-[#E2E8F0] bg-white p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#00437A]">
-              {GROUP_CORPORATE_INFO.legalEntity} · FSP {GROUP_CORPORATE_INFO.fspNumber}
-            </p>
-            <h1 className="mt-1 font-display text-2xl sm:text-3xl font-semibold text-[#091224]">
-              Multi-Branch Group Admin Portal
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-[#00437A]">
+                {GROUP_CORPORATE_INFO.legalEntity} · FSP {GROUP_CORPORATE_INFO.fspNumber}
+              </p>
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
+                  isAdmin
+                    ? 'bg-[#001E50] text-white'
+                    : 'bg-blue-50 text-[#00437A] border border-blue-200'
+                )}
+              >
+                <Shield className="h-3 w-3" />
+                {isAdmin
+                  ? 'Administrator · Full Group Access'
+                  : `Car Sales Agent · ${allocatedBranch?.name ?? 'Assigned Branch'}`}
+              </span>
+            </div>
+            <h1 className="mt-1.5 font-display text-2xl sm:text-3xl font-semibold text-[#091224]">
+              {isAdmin
+                ? 'Multi-Branch Group Admin Portal'
+                : `${allocatedBranch?.name ?? 'Branch'} Sales Workspace`}
             </h1>
             <p className="mt-1 text-xs text-[#475569]">
-              Signed in as <span className="font-mono text-[#091224]">{user.email}</span> · Previewing{' '}
+              Signed in as{' '}
+              <span className="font-semibold text-[#091224]">
+                {staffProfile?.fullName || user.displayName || user.email}
+              </span>{' '}
+              (<span className="font-mono text-[#091224]">{user.email}</span>) · Previewing{' '}
               <strong className="text-[#001E50]">{activeDealership.name}</strong> (ID {activeDealership.id})
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busyAction}
-              onClick={() => void handleSeedAll()}
-            >
-              <Database className="h-3.5 w-3.5" />
-              <span>Seed / Reset Default Group Data</span>
-            </Button>
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busyAction}
+                onClick={() => void handleSeedAll()}
+              >
+                <Database className="h-3.5 w-3.5" />
+                <span>Seed / Reset Default Group Data</span>
+              </Button>
+            )}
 
             <Button variant="ghost" size="sm" onClick={() => void signOutAdmin()}>
               <LogOut className="h-3.5 w-3.5" />
@@ -430,7 +920,7 @@ export function AdminPortalPage() {
           </div>
         </div>
 
-        {usingFallbackSeed && (
+        {isAdmin && usingFallbackSeed && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-3">
             <span>
               Firestore catalog collections are currently empty and displaying built-in fallback data. Click <strong>Seed / Reset Default Group Data</strong> to populate Firestore.
@@ -445,29 +935,26 @@ export function AdminPortalPage() {
           </div>
         )}
 
+        {actionError && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-3.5 text-sm text-red-900">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+              <span>{actionError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionError(null)}
+              className="text-xs font-semibold text-red-700 hover:underline cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {/* Navigation Tabs & Search */}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-[#E2E8F0] bg-white p-1.5">
-            {[
-              { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-              {
-                id: 'vehicles' as const,
-                label: `Master Stock (${allVehicles.length})`,
-                icon: Car,
-              },
-              {
-                id: 'promotions' as const,
-                label: `Promotions & Events (${allPromotions.length})`,
-                icon: Sparkles,
-              },
-              {
-                id: 'branches' as const,
-                label: 'Branch Settings (3)',
-                icon: Building2,
-              },
-              { id: 'news' as const, label: `News (${allNews.length})`, icon: Newspaper },
-              { id: 'leads' as const, label: `Leads (${leads.length})`, icon: Inbox },
-            ].map((tab) => {
+            {navTabs.map((tab) => {
               const Icon = tab.icon;
               return (
                 <button
@@ -505,212 +992,281 @@ export function AdminPortalPage() {
         {activeTab === 'overview' && (
           <div className="space-y-8">
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                {
-                  label: 'Available Master Stock',
-                  value: `${activeVehicles.length} / ${allVehicles.length}`,
-                  sub: 'Shared across Newcastle, Ermelo & Vryheid',
-                },
-                {
-                  label: 'Live Promotions & Events',
-                  value: `${livePromotionsList.length}`,
-                  sub: `${archivedPromotions.length} archived or expired`,
-                },
-                {
-                  label: 'Viewing Active Branch',
-                  value: `${activePromotions.length} live on ${activeDealership.shortName}`,
-                  sub: 'Includes MASTER + Branch-scoped items',
-                },
-                {
-                  label: 'Customer Leads',
-                  value: `${leads.length}`,
-                  sub: `${leads.filter((l) => l.status === 'new').length} awaiting follow-up`,
-                },
-              ].map((stat) => (
+              {(isAdmin
+                ? [
+                    {
+                      label: 'Available Master Stock',
+                      value: `${activeVehicles.length} / ${allVehicles.length}`,
+                      sub: 'Shared across Newcastle, Ermelo & Vryheid',
+                    },
+                    {
+                      label: 'Live Promotions & Events',
+                      value: `${livePromotionsList.length}`,
+                      sub: `${scopedArchivedPromotions.length} archived or expired`,
+                    },
+                    {
+                      label: 'Authorized Staff Users',
+                      value: `${staffUsers.filter((s) => s.active).length}`,
+                      sub: `${staffUsers.filter((s) => s.mustChangePassword).length} pending first password setup`,
+                    },
+                    {
+                      label: 'Customer Leads',
+                      value: `${leads.length}`,
+                      sub: `${leads.filter((l) => l.status === 'new').length} awaiting follow-up`,
+                    },
+                  ]
+                : [
+                    {
+                      label: `${allocatedBranch?.shortName ?? 'Branch'} Total Stock`,
+                      value: `${scopedVehicles.length}`,
+                      sub: `${scopedVehicles.filter((v) => v.status === 'available').length} currently available`,
+                    },
+                    {
+                      label: 'Manual Branch Vehicles',
+                      value: `${manualVehiclesCount}`,
+                      sub: `Editable vehicles held at ${allocatedBranch?.shortName ?? 'your branch'}`,
+                    },
+                    {
+                      label: 'Live Specials & Events',
+                      value: `${livePromotionsList.length}`,
+                      sub: `${scopedArchivedPromotions.length} archived or expired`,
+                    },
+                    {
+                      label: 'Allocated Dealership',
+                      value: `Branch ID ${allocatedBranchId ?? '—'}`,
+                      sub: allocatedBranch?.domain ?? '',
+                    },
+                  ]
+              ).map((stat) => (
                 <div
                   key={stat.label}
                   className="rounded-xl border border-[#E2E8F0] bg-white p-6 space-y-2"
                 >
                   <p className="text-xs font-medium text-[#64748B]">{stat.label}</p>
-                  <p className="font-mono text-2xl font-semibold text-[#001E50]">{stat.value}</p>
+                  <p className="font-mono text-2xl font-semibold text-[#001E50] tabular-nums">
+                    {stat.value}
+                  </p>
                   <p className="text-xs text-[#475569]">{stat.sub}</p>
                 </div>
               ))}
             </div>
 
-            {/* 3 Dealership Quick Cards + Live Preview Switcher */}
-            <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="font-display text-lg font-semibold text-[#091224]">
-                    Asaf Auto Sales Group — Active Dealership Domains
-                  </h2>
-                  <p className="text-xs text-[#475569]">
-                    Click <strong>Preview Branch</strong> to switch `?branch=` immediately on this staging/localhost build.
-                  </p>
+            {isSalesAgent && allocatedBranch && (
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-mono font-semibold text-[#00437A]">
+                      Assigned Dealership · Branch ID {allocatedBranch.id} ({allocatedBranch.domain})
+                    </span>
+                    <h2 className="font-display text-lg font-semibold text-[#091224]">
+                      {allocatedBranch.name} — Car Sales Agent Permissions
+                    </h2>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('vehicles')}>
+                      <Car className="h-3.5 w-3.5" />
+                      <span>Manage Branch Stock</span>
+                    </Button>
+                    <Button size="sm" onClick={() => setActiveTab('promotions')}>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      <span>Manage Specials &amp; Events</span>
+                    </Button>
+                  </div>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setActiveTab('branches')}
-                >
-                  <Edit3 className="h-3.5 w-3.5" />
-                  <span>Edit Branch Settings</span>
-                </Button>
+                <p className="text-xs leading-relaxed text-[#475569]">
+                  Your Car Sales Agent account is scoped strictly to <strong>{allocatedBranch.name}</strong>. You can add, edit, mark sold, or remove manual vehicle listings and publish specials or dealership events for your allocated dealership. User administration, AutoTrader feed sync, and group branch settings remain restricted to Administrators.
+                </p>
               </div>
+            )}
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                {allDealerships.map((branch) => {
-                  const isCurrent = branch.id === activeDealership.id;
-                  const heldStockCount = allVehicles.filter(
-                    (v) => v.homeDealershipId === branch.id && v.status === 'available'
-                  ).length;
-                  const exclusivePromos = livePromotionsList.filter(
-                    (p) => p.scope === 'BRANCH' && p.dealershipId === branch.id
-                  ).length;
+            {/* 3 Dealership Quick Cards + Live Preview Switcher (Admin Only) */}
+            {isAdmin && (
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-lg font-semibold text-[#091224]">
+                      Asaf Auto Sales Group — Active Dealership Domains
+                    </h2>
+                    <p className="text-xs text-[#475569]">
+                      Click <strong>Preview Branch</strong> to switch `?branch=` immediately on this staging/localhost build.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setActiveTab('branches')}
+                  >
+                    <Edit3 className="h-3.5 w-3.5" />
+                    <span>Edit Branch Settings</span>
+                  </Button>
+                </div>
 
-                  return (
-                    <div
-                      key={branch.id}
-                      className={cn(
-                        'rounded-xl border p-5 space-y-3',
-                        isCurrent ? 'border-[#001E50] bg-[#F8FAFC]' : 'border-[#E2E8F0] bg-white'
-                      )}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <span className="text-[11px] font-mono font-semibold text-[#00437A]">
-                            Branch ID {branch.id} · {branch.domain}
-                          </span>
-                          <h3 className="font-display text-base font-semibold text-[#091224]">
-                            {branch.name}
-                          </h3>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  {allDealerships.map((branch) => {
+                    const isCurrent = branch.id === activeDealership.id;
+                    const heldStockCount = allVehicles.filter(
+                      (v) => v.homeDealershipId === branch.id && v.status === 'available'
+                    ).length;
+                    const exclusivePromos = livePromotionsList.filter(
+                      (p) => p.scope === 'BRANCH' && p.dealershipId === branch.id
+                    ).length;
+
+                    return (
+                      <div
+                        key={branch.id}
+                        className={cn(
+                          'rounded-xl border p-5 space-y-3',
+                          isCurrent ? 'border-[#001E50] bg-[#F8FAFC]' : 'border-[#E2E8F0] bg-white'
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="text-[11px] font-mono font-semibold text-[#00437A]">
+                              Branch ID {branch.id} · {branch.domain}
+                            </span>
+                            <h3 className="font-display text-base font-semibold text-[#091224]">
+                              {branch.name}
+                            </h3>
+                          </div>
+                          {isCurrent && (
+                            <span className="rounded bg-[#001E50] px-2 py-0.5 text-[10px] font-semibold text-white">
+                              Active
+                            </span>
+                          )}
                         </div>
-                        {isCurrent && (
-                          <span className="rounded bg-[#001E50] px-2 py-0.5 text-[10px] font-semibold text-white">
-                            Active
+
+                        <div className="text-xs text-[#475569] space-y-1">
+                          <p>{branch.physicalAddress}</p>
+                          <p className="font-mono">{branch.receptionNumber}</p>
+                          {branch.whatsappNumber && (
+                            <p className="font-mono text-emerald-700">
+                              WhatsApp: {branch.whatsappNumber}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between border-t border-[#E2E8F0] pt-3 text-xs">
+                          <span className="text-[#475569]">
+                            {heldStockCount} units · {exclusivePromos} branch promos
                           </span>
-                        )}
+                          <Button
+                            variant={isCurrent ? 'secondary' : 'outline'}
+                            size="sm"
+                            onClick={() => {
+                              switchPreviewBranch(branch.id);
+                              showFlash(`Switched live preview to ${branch.name} (?branch=${branch.id}).`);
+                            }}
+                          >
+                            {isCurrent ? 'Previewing' : 'Preview Branch'}
+                          </Button>
+                        </div>
                       </div>
-
-                      <div className="text-xs text-[#475569] space-y-1">
-                        <p>{branch.physicalAddress}</p>
-                        <p className="font-mono">{branch.receptionNumber}</p>
-                        {branch.whatsappNumber && (
-                          <p className="font-mono text-emerald-700">
-                            WhatsApp: {branch.whatsappNumber}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-[#E2E8F0] pt-3 text-xs">
-                        <span className="text-[#475569]">
-                          {heldStockCount} units · {exclusivePromos} branch promos
-                        </span>
-                        <Button
-                          variant={isCurrent ? 'secondary' : 'outline'}
-                          size="sm"
-                          onClick={() => {
-                            switchPreviewBranch(branch.id);
-                            showFlash(`Switched live preview to ${branch.name} (?branch=${branch.id}).`);
-                          }}
-                        >
-                          {isCurrent ? 'Previewing' : 'Preview Branch'}
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* MASTER GROUP STOCK (VEHICLES) TAB */}
+        {/* MASTER GROUP STOCK / BRANCH STOCK (VEHICLES) TAB */}
         {activeTab === 'vehicles' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-3">
                 <h2 className="font-display text-lg font-semibold text-[#091224]">
-                  Master Group Stock (New, Used &amp; MasterCars)
+                  {isAdmin
+                    ? 'Master Group Stock (New, Used & MasterCars)'
+                    : `${allocatedBranch?.name ?? 'Branch'} Vehicle Stock`}
                 </h2>
-                <Select
-                  value={vehicleBranchFilter}
-                  onChange={(e) => setVehicleBranchFilter(e.target.value as 'All' | DealershipId)}
-                  className="w-52 bg-white"
-                >
-                  <option value="All">All Holding Branches</option>
-                  {allDealerships.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      Held at {b.shortName} (ID {b.id})
-                    </option>
-                  ))}
-                </Select>
+                {isAdmin ? (
+                  <Select
+                    value={vehicleBranchFilter}
+                    onChange={(e) => setVehicleBranchFilter(e.target.value as 'All' | DealershipId)}
+                    className="w-52 bg-white"
+                  >
+                    <option value="All">All Holding Branches</option>
+                    {allDealerships.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        Held at {b.shortName} (ID {b.id})
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-medium text-[#001E50]">
+                    <MapPin className="h-3.5 w-3.5" />
+                    Allocated to {allocatedBranch?.name} (ID {allocatedBranchId})
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
-                <Button
-                  variant="outline"
-                  disabled={syncingAutoTrader}
-                  onClick={async () => {
-                    setSyncingAutoTrader(true);
-                    setSyncError(null);
-                    try {
-                      const report = await syncAutoTraderFromDecodo();
-                      setSyncReport(report);
-                      showFlash('AutoTrader stock sync completed across configured branches.');
-                    } catch (err) {
-                      setSyncError(
-                        err instanceof Error
-                          ? err.message
-                          : 'Unable to sync AutoTrader listings right now.'
-                      );
-                    } finally {
-                      setSyncingAutoTrader(false);
-                    }
-                  }}
-                >
-                  <RefreshCw
-                    className={cn('h-4 w-4', syncingAutoTrader && 'animate-spin')}
-                  />
-                  <span>
-                    {syncingAutoTrader ? 'Syncing AutoTrader...' : 'Sync AutoTrader Stock Now'}
-                  </span>
-                </Button>
+                {isAdmin && (
+                  <>
+                    <Button
+                      variant="outline"
+                      disabled={syncingAutoTrader}
+                      onClick={async () => {
+                        setSyncingAutoTrader(true);
+                        setSyncError(null);
+                        try {
+                          const report = await syncAutoTraderFromDecodo();
+                          setSyncReport(report);
+                          showFlash('AutoTrader stock sync completed across configured branches.');
+                        } catch (err) {
+                          setSyncError(
+                            err instanceof Error
+                              ? err.message
+                              : 'Unable to sync AutoTrader listings right now.'
+                          );
+                        } finally {
+                          setSyncingAutoTrader(false);
+                        }
+                      }}
+                    >
+                      <RefreshCw
+                        className={cn('h-4 w-4', syncingAutoTrader && 'animate-spin')}
+                      />
+                      <span>
+                        {syncingAutoTrader ? 'Syncing AutoTrader...' : 'Sync AutoTrader Stock Now'}
+                      </span>
+                    </Button>
 
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setJsonImportBranchId(
-                      vehicleBranchFilter === 'All' ? activeDealership.id : vehicleBranchFilter
-                    );
-                    setSyncError(null);
-                    setShowJsonImportModal(true);
-                  }}
-                >
-                  <Upload className="h-4 w-4" />
-                  <span>Paste AutoTrader JSON</span>
-                </Button>
-
-                {manualVehiclesCount > 0 && (
-                  <Button
-                    variant="outline"
-                    disabled={busyAction}
-                    onClick={async () => {
-                      setBusyAction(true);
-                      try {
-                        const removed = await clearManualVehicles();
-                        showFlash(
-                          `Removed ${removed} manually added ${removed === 1 ? 'vehicle' : 'vehicles'} from Master Group Stock.`
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setJsonImportBranchId(
+                          vehicleBranchFilter === 'All' ? activeDealership.id : vehicleBranchFilter
                         );
-                      } finally {
-                        setBusyAction(false);
-                      }
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 text-red-600" />
-                    <span>Remove Manual Cars ({manualVehiclesCount})</span>
-                  </Button>
+                        setSyncError(null);
+                        setShowJsonImportModal(true);
+                      }}
+                    >
+                      <Upload className="h-4 w-4" />
+                      <span>Paste AutoTrader JSON</span>
+                    </Button>
+
+                    {manualVehiclesCount > 0 && (
+                      <Button
+                        variant="outline"
+                        disabled={busyAction}
+                        onClick={async () => {
+                          setBusyAction(true);
+                          try {
+                            const removed = await clearManualVehicles();
+                            showFlash(
+                              `Removed ${removed} manually added ${removed === 1 ? 'vehicle' : 'vehicles'} from Master Group Stock.`
+                            );
+                          } finally {
+                            setBusyAction(false);
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-600" />
+                        <span>Remove Manual Cars ({manualVehiclesCount})</span>
+                      </Button>
+                    )}
+                  </>
                 )}
 
                 <Button
@@ -732,7 +1288,7 @@ export function AdminPortalPage() {
                       fuelEconomy: 'VW Spec',
                       colour: 'Pure White',
                       images: ['/assets/aistudio/vwslider10_5974d4ed.jpg'],
-                      homeDealershipId: activeDealership.id,
+                      homeDealershipId: allocatedBranchId ?? activeDealership.id,
                       status: 'available',
                       source: 'manual',
                       extraImagesText: '',
@@ -740,7 +1296,11 @@ export function AdminPortalPage() {
                   }
                 >
                   <Plus className="h-4 w-4" />
-                  <span>Add Vehicle to Group Stock</span>
+                  <span>
+                    {isAdmin
+                      ? 'Add Vehicle to Group Stock'
+                      : `Add Vehicle to ${allocatedBranch?.shortName ?? 'Branch'}`}
+                  </span>
                 </Button>
               </div>
             </div>
@@ -897,30 +1457,44 @@ export function AdminPortalPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3.5 text-right">
-                          <div className="inline-flex items-center gap-1.5">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                setEditingVehicle({
-                                  ...v,
-                                  extraImagesText: v.images.slice(1).join('\n'),
-                                })
-                              }
-                            >
-                              <Edit3 className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={async () => {
-                                await deleteVehicle(v.id);
-                                showFlash(`Removed ${v.title} from Master Group Stock.`);
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-600" />
-                            </Button>
-                          </div>
+                          {isSalesAgent && isAutoTrader ? (
+                            <span className="text-[11px] font-medium text-[#64748B]">
+                              AutoTrader Feed
+                            </span>
+                          ) : (
+                            <div className="inline-flex items-center gap-1.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  setEditingVehicle({
+                                    ...v,
+                                    extraImagesText: v.images.slice(1).join('\n'),
+                                  })
+                                }
+                              >
+                                <Edit3 className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={async () => {
+                                  try {
+                                    await deleteVehicle(v.id);
+                                    showFlash(`Removed ${v.title} from stock.`);
+                                  } catch (err) {
+                                    setActionError(
+                                      err instanceof Error
+                                        ? err.message
+                                        : 'Unable to remove vehicle.'
+                                    );
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                              </Button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -959,7 +1533,7 @@ export function AdminPortalPage() {
                         : 'text-[#475569] hover:text-[#091224]'
                     )}
                   >
-                    Archived / Expired ({archivedPromotions.length})
+                    Archived / Expired ({scopedArchivedPromotions.length})
                   </button>
                 </div>
 
@@ -971,22 +1545,24 @@ export function AdminPortalPage() {
                   <option value="all">All Types</option>
                   <option value="special">Specials</option>
                   <option value="event">Events</option>
-                  <option value="competition">Competitions</option>
+                  {isAdmin && <option value="competition">Competitions</option>}
                 </Select>
 
-                <Select
-                  value={promoScopeFilter}
-                  onChange={(e) =>
-                    setPromoScopeFilter(e.target.value as 'all' | 'MASTER' | DealershipId)
-                  }
-                  className="w-56 bg-white"
-                >
-                  <option value="all">All Visibility Scopes</option>
-                  <option value="MASTER">All Dealerships (Master)</option>
-                  <option value="1">Newcastle VW Only (ID 1)</option>
-                  <option value="2">Ermelo VW Only (ID 2)</option>
-                  <option value="3">Vryheid VW Only (ID 3)</option>
-                </Select>
+                {isAdmin && (
+                  <Select
+                    value={promoScopeFilter}
+                    onChange={(e) =>
+                      setPromoScopeFilter(e.target.value as 'all' | 'MASTER' | DealershipId)
+                    }
+                    className="w-56 bg-white"
+                  >
+                    <option value="all">All Visibility Scopes</option>
+                    <option value="MASTER">All Dealerships (Master)</option>
+                    <option value="1">Newcastle VW Only (ID 1)</option>
+                    <option value="2">Ermelo VW Only (ID 2)</option>
+                    <option value="3">Vryheid VW Only (ID 3)</option>
+                  </Select>
+                )}
               </div>
 
               <Button
@@ -998,26 +1574,32 @@ export function AdminPortalPage() {
                     description: '',
                     imageUrl: '/assets/aistudio/vwslider10_5974d4ed.jpg',
                     validUntil: addDaysISO(todayISO, 30),
-                    scope: 'MASTER',
-                    dealershipId: null,
+                    scope: isSalesAgent ? 'BRANCH' : 'MASTER',
+                    dealershipId: isSalesAgent ? allocatedBranchId : null,
                     active: true,
                     vehicleName: '',
                     offerPrice: 0,
                     monthlyFrom: 0,
                     eventTime: '',
-                    location: 'All Asaf Auto Sales VW Branches',
-                    visibilityChoice: 'MASTER',
+                    location: isSalesAgent
+                      ? allocatedBranch?.physicalAddress ?? ''
+                      : 'All Asaf Auto Sales VW Branches',
+                    visibilityChoice: isSalesAgent && allocatedBranchId ? allocatedBranchId : 'MASTER',
                   })
                 }
               >
                 <Plus className="h-4 w-4" />
-                <span>Add Special / Event / Competition</span>
+                <span>
+                  {isAdmin
+                    ? 'Add Special / Event / Competition'
+                    : `Add ${allocatedBranch?.shortName ?? 'Branch'} Special / Event`}
+                </span>
               </Button>
             </div>
 
             <div className="rounded-xl border border-[#E2E8F0] bg-white px-5 py-3.5 text-xs text-[#475569]">
               Campaigns whose <strong>Valid Until</strong> date is before today (
-              <span className="font-mono text-[#091224]">{todayISO}</span>) are automatically archived and removed from public dealership sites. Use <strong>Bring Back with New Date</strong> on archived items to relaunch them.
+              <span className="font-mono text-[#091224]">{todayISO}</span>) are automatically hidden from public dealership sites. Use <strong>Bring Back</strong> on archived items to relaunch them.
             </div>
 
             {filteredPromotions.length === 0 ? (
@@ -1136,8 +1718,238 @@ export function AdminPortalPage() {
           </div>
         )}
 
+        {/* USERS & ROLES TAB (ADMINISTRATOR ONLY) */}
+        {isAdmin && activeTab === 'users' && (
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-lg font-semibold text-[#091224]">
+                  Dealership Staff Users &amp; Access Roles
+                </h2>
+                <p className="text-xs text-[#475569]">
+                  Add Car Sales Agents or Administrators with a generated temporary password. New staff must create their own personal password upon first sign-in.
+                </p>
+              </div>
+
+              <Button
+                onClick={() => {
+                  setNewStaffFullName('');
+                  setNewStaffPhone('');
+                  setNewStaffEmail('');
+                  setNewStaffRole('agent');
+                  setNewStaffBranchId(activeDealership.id);
+                  setNewStaffPassword(generateSecureRandomPassword(12));
+                  setStaffModalError(null);
+                  setCreatedStaffReceipt(null);
+                  setShowCreateStaffModal(true);
+                }}
+              >
+                <UserPlus className="h-4 w-4" />
+                <span>Add Staff User</span>
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
+                <p className="text-xs text-[#64748B]">Administrators (Full Access)</p>
+                <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
+                  {staffUsers.filter((s) => s.role === 'admin' && s.active).length}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
+                <p className="text-xs text-[#64748B]">Car Sales Agents (Branch-Scoped)</p>
+                <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
+                  {staffUsers.filter((s) => s.role === 'agent' && s.active).length}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
+                <p className="text-xs text-[#64748B]">Pending First Password Setup</p>
+                <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
+                  {staffUsers.filter((s) => s.mustChangePassword && s.active).length}
+                </p>
+              </div>
+            </div>
+
+            {filteredStaffUsers.length === 0 ? (
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-12 text-center space-y-3">
+                <p className="text-sm font-medium text-[#091224]">
+                  No staff user profiles added yet
+                </p>
+                <p className="text-xs text-[#475569] max-w-md mx-auto">
+                  Click <strong>Add Staff User</strong> above to create Car Sales Agents allocated to Newcastle VW, Ermelo VW, or Vryheid VW, or add co-Administrators.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-[#E2E8F0] bg-white">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-[#E2E8F0] bg-[#F8FAFC] text-xs uppercase text-[#475569]">
+                    <tr>
+                      <th className="px-4 py-3">Staff Member</th>
+                      <th className="px-4 py-3">Role Privilege</th>
+                      <th className="px-4 py-3">Allocated Dealership</th>
+                      <th className="px-4 py-3">Password Setup</th>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E2E8F0]">
+                    {filteredStaffUsers.map((staff) => {
+                      const branch = staff.allocatedDealershipId
+                        ? dealershipsById[staff.allocatedDealershipId]
+                        : null;
+                      const isSelf = staff.uid === user.uid;
+
+                      return (
+                        <tr key={staff.uid} className="hover:bg-[#F8FAFC]">
+                          <td className="px-4 py-3.5">
+                            <p className="font-semibold text-[#091224]">
+                              {staff.fullName}
+                              {isSelf ? ' (You)' : ''}
+                            </p>
+                            <p className="font-mono text-xs text-[#475569]">{staff.email}</p>
+                            <p className="font-mono text-xs text-[#64748B] tabular-nums">
+                              {staff.phone}
+                            </p>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <span
+                              className={cn(
+                                'inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold',
+                                staff.role === 'admin'
+                                  ? 'bg-[#001E50] text-white'
+                                  : 'bg-blue-50 text-[#00437A]'
+                              )}
+                            >
+                              {staff.role === 'admin' ? 'Administrator' : 'Car Sales Agent'}
+                            </span>
+                            <p className="mt-1 text-[11px] text-[#64748B]">
+                              {staff.role === 'admin'
+                                ? 'Full access + user management'
+                                : 'Cars, specials & events only'}
+                            </p>
+                          </td>
+                          <td className="px-4 py-3.5 text-xs">
+                            {branch ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-[#001E50]/5 px-2 py-1 font-medium text-[#001E50]">
+                                <MapPin className="h-3 w-3" />
+                                {branch.shortName} (ID {branch.id})
+                              </span>
+                            ) : (
+                              <span className="text-[#475569]">All Group Dealerships</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <span
+                              className={cn(
+                                'inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold',
+                                staff.mustChangePassword
+                                  ? 'bg-amber-50 text-amber-800'
+                                  : 'bg-emerald-50 text-emerald-800'
+                              )}
+                            >
+                              {staff.mustChangePassword ? 'Pending First Setup' : 'Configured'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5">
+                            <span
+                              className={cn(
+                                'inline-flex rounded px-2 py-0.5 text-xs font-medium',
+                                staff.active
+                                  ? 'bg-emerald-50 text-emerald-800'
+                                  : 'bg-slate-100 text-slate-600'
+                              )}
+                            >
+                              {staff.active ? 'Active' : 'Suspended'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5 text-right">
+                            {confirmRemoveStaffUid === staff.uid ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setConfirmRemoveStaffUid(null)}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={async () => {
+                                    try {
+                                      await removeStaffUser(staff.uid);
+                                      setConfirmRemoveStaffUid(null);
+                                      showFlash(
+                                        `Removed ${staff.fullName} and revoked dealership access.`
+                                      );
+                                    } catch (err) {
+                                      setActionError(
+                                        err instanceof Error
+                                          ? err.message
+                                          : 'Unable to remove staff user.'
+                                      );
+                                    }
+                                  }}
+                                  className="bg-red-600 hover:bg-red-700 text-white"
+                                >
+                                  Confirm Remove
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="inline-flex items-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Edit Role / Dealership / Details"
+                                  onClick={() => setEditingStaffUser({ ...staff })}
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Send Password Reset Email"
+                                  onClick={async () => {
+                                    try {
+                                      await sendStaffPasswordReset(staff.email);
+                                      showFlash(
+                                        `Password reset link sent to ${staff.email}.`
+                                      );
+                                    } catch (err) {
+                                      setActionError(
+                                        err instanceof Error
+                                          ? err.message
+                                          : 'Unable to send reset email.'
+                                      );
+                                    }
+                                  }}
+                                >
+                                  <Mail className="h-3.5 w-3.5 text-[#00437A]" />
+                                </Button>
+                                {!isSelf && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Remove Staff User"
+                                    onClick={() => setConfirmRemoveStaffUid(staff.uid)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* BRANCH SETTINGS TAB */}
-        {activeTab === 'branches' && (
+        {isAdmin && activeTab === 'branches' && (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E2E8F0] bg-white p-5">
               <div className="flex flex-wrap items-center gap-2">
@@ -1451,7 +2263,7 @@ export function AdminPortalPage() {
         )}
 
         {/* NEWS TAB */}
-        {activeTab === 'news' && (
+        {isAdmin && activeTab === 'news' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-display text-lg font-semibold text-[#091224]">
@@ -1529,7 +2341,7 @@ export function AdminPortalPage() {
         )}
 
         {/* LEADS TAB */}
-        {activeTab === 'leads' && (
+        {isAdmin && activeTab === 'leads' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-display text-lg font-semibold text-[#091224]">
@@ -1648,18 +2460,25 @@ export function AdminPortalPage() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              const extraUrls = editingVehicle.extraImagesText
-                .split(/[\n,]+/)
-                .map((u) => u.trim())
-                .filter(Boolean);
-              const combinedImages = [editingVehicle.images[0], ...extraUrls].filter(Boolean);
+              try {
+                const extraUrls = editingVehicle.extraImagesText
+                  .split(/[\n,]+/)
+                  .map((u) => u.trim())
+                  .filter(Boolean);
+                const combinedImages = [editingVehicle.images[0], ...extraUrls].filter(Boolean);
+                const { extraImagesText: _ignoreExtra, ...vehiclePayload } = editingVehicle;
 
-              await saveVehicle({
-                ...editingVehicle,
-                images: combinedImages,
-              });
-              setEditingVehicle(null);
-              showFlash(`Saved "${editingVehicle.title}" to Master Group Stock.`);
+                await saveVehicle({
+                  ...vehiclePayload,
+                  images: combinedImages,
+                });
+                setEditingVehicle(null);
+                showFlash(`Saved "${editingVehicle.title}" to stock.`);
+              } catch (err) {
+                setActionError(
+                  err instanceof Error ? err.message : 'Unable to save vehicle details.'
+                );
+              }
             }}
             className="space-y-4"
           >
@@ -1691,21 +2510,29 @@ export function AdminPortalPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <Label>Holding Dealership *</Label>
-                <Select
-                  value={editingVehicle.homeDealershipId}
-                  onChange={(e) =>
-                    setEditingVehicle({
-                      ...editingVehicle,
-                      homeDealershipId: e.target.value as DealershipId,
-                    })
-                  }
-                >
-                  {allDealerships.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} (ID {b.id})
-                    </option>
-                  ))}
-                </Select>
+                {isSalesAgent ? (
+                  <Input
+                    value={`${allocatedBranch?.name ?? 'Assigned Branch'} (ID ${allocatedBranchId})`}
+                    disabled
+                    className="bg-[#F1F5F9] text-[#334155]"
+                  />
+                ) : (
+                  <Select
+                    value={editingVehicle.homeDealershipId}
+                    onChange={(e) =>
+                      setEditingVehicle({
+                        ...editingVehicle,
+                        homeDealershipId: e.target.value as DealershipId,
+                      })
+                    }
+                  >
+                    {allDealerships.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} (ID {b.id})
+                      </option>
+                    ))}
+                  </Select>
+                )}
               </div>
               <div>
                 <Label>Category *</Label>
@@ -1912,18 +2739,30 @@ export function AdminPortalPage() {
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              const scope: PromotionScope =
-                editingPromo.visibilityChoice === 'MASTER' ? 'MASTER' : 'BRANCH';
-              const dealershipId: DealershipId | null =
-                editingPromo.visibilityChoice === 'MASTER' ? null : editingPromo.visibilityChoice;
+              try {
+                const scope: PromotionScope =
+                  isSalesAgent || editingPromo.visibilityChoice !== 'MASTER'
+                    ? 'BRANCH'
+                    : 'MASTER';
+                const dealershipId: DealershipId | null = isSalesAgent
+                  ? allocatedBranchId
+                  : editingPromo.visibilityChoice === 'MASTER'
+                  ? null
+                  : editingPromo.visibilityChoice;
+                const { visibilityChoice: _ignoreVis, ...promoPayload } = editingPromo;
 
-              await savePromotion({
-                ...editingPromo,
-                scope,
-                dealershipId,
-              });
-              setEditingPromo(null);
-              showFlash(`Saved "${editingPromo.title}".`);
+                await savePromotion({
+                  ...promoPayload,
+                  scope,
+                  dealershipId,
+                });
+                setEditingPromo(null);
+                showFlash(`Saved "${editingPromo.title}".`);
+              } catch (err) {
+                setActionError(
+                  err instanceof Error ? err.message : 'Unable to save campaign.'
+                );
+              }
             }}
             className="space-y-4"
           >
@@ -1949,29 +2788,39 @@ export function AdminPortalPage() {
                 >
                   <option value="special">Monthly Special</option>
                   <option value="event">Dealership Event</option>
-                  <option value="competition">Competition / Prize Draw</option>
+                  {isAdmin && (
+                    <option value="competition">Competition / Prize Draw</option>
+                  )}
                 </Select>
               </div>
             </div>
 
-            {/* 4-Option Visibility Selector */}
+            {/* Visibility Selector */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <Label>Visibility Scope *</Label>
-                <Select
-                  value={editingPromo.visibilityChoice}
-                  onChange={(e) =>
-                    setEditingPromo({
-                      ...editingPromo,
-                      visibilityChoice: e.target.value as VisibilityChoice,
-                    })
-                  }
-                >
-                  <option value="MASTER">All Dealerships (Master)</option>
-                  <option value="1">Newcastle VW Only (ID 1)</option>
-                  <option value="2">Ermelo VW Only (ID 2)</option>
-                  <option value="3">Vryheid VW Only (ID 3)</option>
-                </Select>
+                {isSalesAgent ? (
+                  <Input
+                    value={`${allocatedBranch?.name ?? 'Assigned Branch'} Only (ID ${allocatedBranchId})`}
+                    disabled
+                    className="bg-[#F1F5F9] text-[#334155]"
+                  />
+                ) : (
+                  <Select
+                    value={editingPromo.visibilityChoice}
+                    onChange={(e) =>
+                      setEditingPromo({
+                        ...editingPromo,
+                        visibilityChoice: e.target.value as VisibilityChoice,
+                      })
+                    }
+                  >
+                    <option value="MASTER">All Dealerships (Master)</option>
+                    <option value="1">Newcastle VW Only (ID 1)</option>
+                    <option value="2">Ermelo VW Only (ID 2)</option>
+                    <option value="3">Vryheid VW Only (ID 3)</option>
+                  </Select>
+                )}
               </div>
               <div>
                 <Label>Valid Until / Event Date (YYYY-MM-DD) *</Label>
@@ -2340,6 +3189,402 @@ export function AdminPortalPage() {
               <Button type="submit" disabled={busyAction}>
                 <Upload className="h-4 w-4" />
                 <span>{busyAction ? 'Importing...' : 'Import to Firestore'}</span>
+              </Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+
+      {/* ADD STAFF USER MODAL (ADMIN ONLY) */}
+      {isAdmin && showCreateStaffModal && (
+        <Dialog
+          open
+          onClose={() => {
+            setShowCreateStaffModal(false);
+            setCreatedStaffReceipt(null);
+            setStaffModalError(null);
+          }}
+          title={createdStaffReceipt ? 'Staff Account Created' : 'Add New Staff User'}
+          subtitle={
+            createdStaffReceipt
+              ? 'Share these temporary sign-in credentials securely. The user will be prompted to create a personal password on first sign-in.'
+              : 'Create a Car Sales Agent or Administrator with a temporary random password.'
+          }
+          maxWidthClass="max-w-xl"
+        >
+          {createdStaffReceipt ? (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-950 space-y-2">
+                <p className="font-semibold text-sm">
+                  {createdStaffReceipt.profile.fullName} added as{' '}
+                  {createdStaffReceipt.profile.role === 'admin'
+                    ? 'Administrator'
+                    : 'Car Sales Agent'}
+                </p>
+                <p>
+                  <strong>Allocated Dealership:</strong>{' '}
+                  {createdStaffReceipt.profile.allocatedDealershipId
+                    ? dealershipsById[createdStaffReceipt.profile.allocatedDealershipId]?.name
+                    : 'All Group Dealerships'}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[#475569]">Work Email:</span>
+                  <span className="font-mono font-semibold text-[#091224]">
+                    {createdStaffReceipt.profile.email}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[#475569]">Temporary Password:</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold text-[#001E50] bg-white border border-[#E2E8F0] rounded px-2 py-0.5">
+                      {createdStaffReceipt.temporaryPassword}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        void copyText('receipt-pw', createdStaffReceipt.temporaryPassword)
+                      }
+                    >
+                      {copiedKey === 'receipt-pw' ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap justify-end gap-2.5 border-t border-[#E2E8F0] pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const branchText = createdStaffReceipt.profile.allocatedDealershipId
+                      ? dealershipsById[createdStaffReceipt.profile.allocatedDealershipId]?.name
+                      : 'All Group Dealerships';
+                    const message = `Asaf Auto Sales Dealership Portal Access\nName: ${createdStaffReceipt.profile.fullName}\nBranch: ${branchText}\nRole: ${
+                      createdStaffReceipt.profile.role === 'admin'
+                        ? 'Administrator'
+                        : 'Car Sales Agent'
+                    }\nWork Email: ${createdStaffReceipt.profile.email}\nTemporary Password: ${
+                      createdStaffReceipt.temporaryPassword
+                    }\nPlease sign in at /admin and set your personal password on first login.`;
+                    void copyText('receipt-all', message);
+                  }}
+                >
+                  {copiedKey === 'receipt-all' ? (
+                    <Check className="h-4 w-4 text-emerald-600" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                  <span>
+                    {copiedKey === 'receipt-all' ? 'Copied Details' : 'Copy Full Invite Details'}
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateStaffModal(false);
+                    setCreatedStaffReceipt(null);
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusyAction(true);
+                setStaffModalError(null);
+                try {
+                  const profile = await createStaffUser({
+                    fullName: newStaffFullName,
+                    phone: newStaffPhone,
+                    email: newStaffEmail,
+                    role: newStaffRole,
+                    allocatedDealershipId:
+                      newStaffRole === 'agent' ? newStaffBranchId : newStaffBranchId,
+                    defaultPassword: newStaffPassword,
+                  });
+                  setCreatedStaffReceipt({
+                    profile,
+                    temporaryPassword: newStaffPassword,
+                  });
+                  showFlash(`Created staff account for ${profile.fullName}.`);
+                } catch (err) {
+                  setStaffModalError(
+                    err instanceof Error ? err.message : 'Unable to create staff account.'
+                  );
+                } finally {
+                  setBusyAction(false);
+                }
+              }}
+              className="space-y-4"
+            >
+              {staffModalError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-900">
+                  {staffModalError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>Full Name *</Label>
+                  <Input
+                    value={newStaffFullName}
+                    onChange={(e) => setNewStaffFullName(e.target.value)}
+                    placeholder="e.g. Sipho Mkhize"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Contact Number *</Label>
+                  <Input
+                    type="tel"
+                    value={newStaffPhone}
+                    onChange={(e) => setNewStaffPhone(e.target.value)}
+                    placeholder="e.g. 082 555 0142"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label>Work Email Address *</Label>
+                <Input
+                  type="email"
+                  value={newStaffEmail}
+                  onChange={(e) => setNewStaffEmail(e.target.value)}
+                  placeholder="e.g. sipho@newcastlevw.co.za"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <Label>Role Privilege *</Label>
+                  <Select
+                    value={newStaffRole}
+                    onChange={(e) => setNewStaffRole(e.target.value as StaffRole)}
+                  >
+                    <option value="agent">
+                      Car Sales Agent (Cars, Specials &amp; Events for Branch)
+                    </option>
+                    <option value="admin">Administrator (Full Group Access)</option>
+                  </Select>
+                </div>
+                <div>
+                  <Label>
+                    {newStaffRole === 'agent'
+                      ? 'Allocated Dealership *'
+                      : 'Primary Dealership (Optional)'}
+                  </Label>
+                  <Select
+                    value={newStaffBranchId}
+                    onChange={(e) => setNewStaffBranchId(e.target.value as DealershipId)}
+                  >
+                    {allDealerships.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} (ID {b.id})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>Default Temporary Password *</Label>
+                  <button
+                    type="button"
+                    onClick={() => setNewStaffPassword(generateSecureRandomPassword(12))}
+                    className="text-xs font-semibold text-[#00437A] hover:underline cursor-pointer"
+                  >
+                    Generate New Random Password
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={newStaffPassword}
+                    onChange={(e) => setNewStaffPassword(e.target.value)}
+                    minLength={8}
+                    className="font-mono"
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void copyText('draft-pw', newStaffPassword)}
+                  >
+                    {copiedKey === 'draft-pw' ? (
+                      <Check className="h-4 w-4 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+                <p className="mt-1 text-[11px] text-[#64748B]">
+                  Must be at least 8 characters. On first sign-in, this staff member will be forced to replace it with their own password.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-[#E2E8F0] pt-4">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setShowCreateStaffModal(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busyAction}>
+                  <UserPlus className="h-4 w-4" />
+                  <span>{busyAction ? 'Creating User...' : 'Create Staff Account'}</span>
+                </Button>
+              </div>
+            </form>
+          )}
+        </Dialog>
+      )}
+
+      {/* EDIT STAFF USER MODAL (ADMIN ONLY) */}
+      {isAdmin && editingStaffUser && (
+        <Dialog
+          open
+          onClose={() => {
+            setEditingStaffUser(null);
+            setStaffModalError(null);
+          }}
+          title="Edit Staff User Permissions"
+          subtitle={editingStaffUser.email}
+          maxWidthClass="max-w-lg"
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusyAction(true);
+              setStaffModalError(null);
+              try {
+                await updateStaffUser(editingStaffUser.uid, {
+                  fullName: editingStaffUser.fullName,
+                  phone: editingStaffUser.phone,
+                  role: editingStaffUser.role,
+                  allocatedDealershipId:
+                    editingStaffUser.role === 'agent'
+                      ? editingStaffUser.allocatedDealershipId ?? '1'
+                      : editingStaffUser.allocatedDealershipId,
+                  active: editingStaffUser.active,
+                });
+                setEditingStaffUser(null);
+                showFlash(`Updated permissions for ${editingStaffUser.fullName}.`);
+              } catch (err) {
+                setStaffModalError(
+                  err instanceof Error ? err.message : 'Unable to update staff profile.'
+                );
+              } finally {
+                setBusyAction(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            {staffModalError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-900">
+                {staffModalError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Full Name *</Label>
+                <Input
+                  value={editingStaffUser.fullName}
+                  onChange={(e) =>
+                    setEditingStaffUser({ ...editingStaffUser, fullName: e.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Contact Number *</Label>
+                <Input
+                  value={editingStaffUser.phone}
+                  onChange={(e) =>
+                    setEditingStaffUser({ ...editingStaffUser, phone: e.target.value })
+                  }
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Role Privilege *</Label>
+                <Select
+                  value={editingStaffUser.role}
+                  onChange={(e) =>
+                    setEditingStaffUser({
+                      ...editingStaffUser,
+                      role: e.target.value as StaffRole,
+                      allocatedDealershipId:
+                        e.target.value === 'agent'
+                          ? editingStaffUser.allocatedDealershipId ?? '1'
+                          : editingStaffUser.allocatedDealershipId,
+                    })
+                  }
+                >
+                  <option value="agent">Car Sales Agent</option>
+                  <option value="admin">Administrator</option>
+                </Select>
+              </div>
+              <div>
+                <Label>Allocated Dealership *</Label>
+                <Select
+                  value={editingStaffUser.allocatedDealershipId ?? '1'}
+                  onChange={(e) =>
+                    setEditingStaffUser({
+                      ...editingStaffUser,
+                      allocatedDealershipId: e.target.value as DealershipId,
+                    })
+                  }
+                >
+                  {allDealerships.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} (ID {b.id})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-[#334155] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editingStaffUser.active}
+                onChange={(e) =>
+                  setEditingStaffUser({ ...editingStaffUser, active: e.target.checked })
+                }
+              />
+              <span>Account Active (uncheck to suspend dealership access)</span>
+            </label>
+
+            <div className="flex justify-end gap-3 border-t border-[#E2E8F0] pt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setEditingStaffUser(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busyAction}>
+                <Save className="h-4 w-4" />
+                <span>{busyAction ? 'Saving...' : 'Save Changes'}</span>
               </Button>
             </div>
           </form>

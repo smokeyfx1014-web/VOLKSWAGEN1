@@ -30,6 +30,12 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
+export function getProvisionerAuth() {
+  const existing = getApps().find((candidate) => candidate.name === 'staff-provisioner');
+  const secondaryApp = existing ?? initializeApp(firebaseConfig, 'staff-provisioner');
+  return getAuth(secondaryApp);
+}
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',

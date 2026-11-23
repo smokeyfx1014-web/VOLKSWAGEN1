@@ -28,12 +28,30 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function hasStaffDoc() {
+      return isSignedIn() && exists(/databases/$(database)/documents/staffUsers/$(request.auth.uid));
+    }
+
+    function staffData() {
+      return get(/databases/$(database)/documents/staffUsers/$(request.auth.uid)).data;
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         (request.auth.token.email_verified == true &&
           request.auth.token.email == 'smokeydhlamini@gmail.com') ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (hasStaffDoc() && staffData().role == 'admin' && staffData().active == true)
       );
+    }
+
+    function isAgentForBranch(branchId) {
+      return isSignedIn()
+        && isValidBranchId(branchId)
+        && hasStaffDoc()
+        && staffData().role == 'agent'
+        && staffData().active == true
+        && staffData().allocatedDealershipId == branchId;
     }
 
     function isValidDealership(data, branchParam) {
@@ -209,6 +227,32 @@ service cloud.firestore {
         && data.addedAt == request.time;
     }
 
+    function isValidStaffUser(data, uidParam) {
+      return data.keys().hasAll([
+          'uid', 'fullName', 'phone', 'email', 'role', 'allocatedDealershipId',
+          'mustChangePassword', 'active', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'fullName', 'phone', 'email', 'role', 'allocatedDealershipId',
+          'mustChangePassword', 'active', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'
+        ])
+        && isValidId(data.uid) && data.uid == uidParam
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
+        && data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 30
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 140
+        && data.role in ['admin', 'agent']
+        && (
+          (data.role == 'admin' && (data.allocatedDealershipId == null || isValidBranchId(data.allocatedDealershipId))) ||
+          (data.role == 'agent' && isValidBranchId(data.allocatedDealershipId))
+        )
+        && data.mustChangePassword is bool
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time
+        && data.createdBy is string && data.createdBy.size() >= 2 && data.createdBy.size() <= 128
+        && data.updatedBy is string && data.updatedBy == request.auth.uid;
+    }
+
     // Connection health check doc (read-only single doc)
     match /test/{docId} {
       allow get: if docId == 'connection';
@@ -225,20 +269,61 @@ service cloud.firestore {
 
     // Master Group Stock shared across all 3 dealership sites
     match /vehicles/{vehicleId} {
-      allow get: if isValidId(vehicleId) && (existing().status == 'available' || isAdmin());
-      allow list: if resource.data.status == 'available' || isAdmin();
-      allow create: if isAdmin() && isValidId(vehicleId) && incoming().id == vehicleId && incoming().createdAt == request.time && isValidVehicle(incoming());
-      allow update: if isAdmin() && isValidId(vehicleId) && incoming().id == existing().id && incoming().createdAt == existing().createdAt && isValidVehicle(incoming());
-      allow delete: if isAdmin() && isValidId(vehicleId);
+      allow get: if isValidId(vehicleId) && (existing().status == 'available' || isAdmin() || isAgentForBranch(existing().homeDealershipId));
+      allow list: if resource.data.status == 'available' || isAdmin() || isAgentForBranch(resource.data.homeDealershipId);
+      allow create: if isValidId(vehicleId)
+        && incoming().id == vehicleId
+        && incoming().createdAt == request.time
+        && isValidVehicle(incoming())
+        && (
+          isAdmin() ||
+          (isAgentForBranch(incoming().homeDealershipId) && (!('source' in incoming()) || incoming().source == 'manual'))
+        );
+      allow update: if isValidId(vehicleId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && isValidVehicle(incoming())
+        && (
+          isAdmin() ||
+          (isAgentForBranch(existing().homeDealershipId)
+            && incoming().homeDealershipId == existing().homeDealershipId
+            && (!('source' in incoming()) || incoming().source == 'manual'))
+        );
+      allow delete: if isValidId(vehicleId)
+        && (
+          isAdmin() ||
+          (isAgentForBranch(existing().homeDealershipId) && (!('source' in existing()) || existing().source == 'manual'))
+        );
     }
 
     // Scoped Specials, Events & Competitions
     match /promotions/{promotionId} {
-      allow get: if isValidId(promotionId) && (existing().active == true || isAdmin());
-      allow list: if resource.data.active == true || isAdmin();
-      allow create: if isAdmin() && isValidId(promotionId) && incoming().id == promotionId && isValidPromotion(incoming());
-      allow update: if isAdmin() && isValidId(promotionId) && incoming().id == existing().id && isValidPromotion(incoming());
-      allow delete: if isAdmin() && isValidId(promotionId);
+      allow get: if isValidId(promotionId) && (existing().active == true || isAdmin() || (existing().scope == 'BRANCH' && isAgentForBranch(existing().dealershipId)));
+      allow list: if resource.data.active == true || isAdmin() || (resource.data.scope == 'BRANCH' && isAgentForBranch(resource.data.dealershipId));
+      allow create: if isValidId(promotionId)
+        && incoming().id == promotionId
+        && isValidPromotion(incoming())
+        && (
+          isAdmin() ||
+          (incoming().scope == 'BRANCH' && incoming().type in ['special', 'event'] && isAgentForBranch(incoming().dealershipId))
+        );
+      allow update: if isValidId(promotionId)
+        && incoming().id == existing().id
+        && isValidPromotion(incoming())
+        && (
+          isAdmin() ||
+          (existing().scope == 'BRANCH'
+            && incoming().scope == 'BRANCH'
+            && existing().type in ['special', 'event']
+            && incoming().type in ['special', 'event']
+            && isAgentForBranch(existing().dealershipId)
+            && incoming().dealershipId == existing().dealershipId)
+        );
+      allow delete: if isValidId(promotionId)
+        && (
+          isAdmin() ||
+          (existing().scope == 'BRANCH' && existing().type in ['special', 'event'] && isAgentForBranch(existing().dealershipId))
+        );
     }
 
     // Motoring News
@@ -276,6 +361,34 @@ service cloud.firestore {
       allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
       allow create, update: if isAdmin() && isValidId(uid) && isValidAdminDoc(incoming(), uid);
+      allow delete: if isAdmin() && isValidId(uid);
+    }
+
+    // Dealership staff roster (Administrators & Car Sales Agents)
+    match /staffUsers/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(uid)
+        && incoming().createdAt == request.time
+        && incoming().createdBy == request.auth.uid
+        && isValidStaffUser(incoming(), uid);
+      allow update: if isSignedIn()
+        && isValidId(uid)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().createdBy == existing().createdBy
+        && isValidStaffUser(incoming(), uid)
+        && (
+          isAdmin() ||
+          (
+            request.auth.uid == uid
+            && existing().active == true
+            && existing().mustChangePassword == true
+            && incoming().mustChangePassword == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['mustChangePassword', 'updatedAt', 'updatedBy'])
+          )
+        );
       allow delete: if isAdmin() && isValidId(uid);
     }
   }
