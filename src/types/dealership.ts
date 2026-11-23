@@ -22,6 +22,9 @@ export interface DealershipRecord {
   vwFinancialServices: string;
   volkswagensure: string;
   mapEmbedUrl: string;
+  autotraderDealerId: string;
+  autotraderUrl: string;
+  syncEnabled: boolean;
   updatedAt?: unknown;
   updatedBy?: string;
 }
@@ -66,14 +69,18 @@ export interface MotoringArticle {
   asset: AssetSlotSpec;
 }
 
+export type VehicleSource = 'autotrader' | 'manual';
+
 /** Master Group Stock Vehicle stored in /vehicles/{vehicleId} */
 export interface CmsVehicle {
   id: string;
   title: string;
   make: string;
   model: string;
+  variant?: string;
   year: number;
   price: number;
+  priceFormatted?: string;
   monthlyFrom: number;
   mileage: number;
   transmission: string;
@@ -86,9 +93,34 @@ export interface CmsVehicle {
   images: string[];
   homeDealershipId: DealershipId;
   status: VehicleStatus;
+  source?: VehicleSource;
+  externalListingId?: string;
+  dealerId?: string;
+  canonicalUrl?: string;
+  lastSyncedAt?: unknown;
   createdAt?: unknown;
   updatedAt?: unknown;
   updatedBy: string;
+}
+
+export interface AutoTraderBranchSyncSummary {
+  branchId: DealershipId;
+  branchName: string;
+  dealerId: string;
+  skipped: boolean;
+  skipReason?: string;
+  pagesScraped: number;
+  scrapedCount: number;
+  addedCount: number;
+  updatedCount: number;
+  markedSoldCount: number;
+  error?: string;
+}
+
+export interface AutoTraderSyncReport {
+  syncedAtIso: string;
+  mode: 'decodo' | 'json-import';
+  branches: AutoTraderBranchSyncSummary[];
 }
 
 export type PromotionType = 'special' | 'event' | 'competition';

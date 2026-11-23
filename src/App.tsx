@@ -159,6 +159,7 @@ function DealershipShell() {
         return (
           <div className="pt-16">
             <FinanceSection
+              onNavigate={navigateTo}
               onApplyFinance={(preset) =>
                 setModal({
                   type: 'finance',

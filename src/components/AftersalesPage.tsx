@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertCircle, Check, CheckCircle2, Clock, Cog, Wrench } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Clock, Cog, Info, Wrench } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { SERVICE_PARTS_ASSETS } from '../data/dealership';
@@ -18,6 +18,8 @@ type FieldErrorMap = Partial<
     | 'fullName'
     | 'phone'
     | 'email'
+    | 'vehicleYear'
+    | 'vehicleModel'
     | 'vehicleReg'
     | 'vinNumber'
     | 'mileageKm'
@@ -53,15 +55,16 @@ const ERROR_INPUT_CLASS =
 
 export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) {
   const { activeDealership } = useDealership();
-  const { activeVehicles, submitLead } = useDealershipData();
+  const { submitLead } = useDealershipData();
 
   const [activeTab, setActiveTab] = useState<'service' | 'parts'>(initialTab);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [selectedModel, setSelectedModel] = useState(
-    activeVehicles[0]?.title ?? '2026 Volkswagen Polo Vivo 1.4 Life'
-  );
+
+  // Typed VAG vehicle identification (supports VW, Audi, Porsche, VW Commercial, SEAT, Skoda)
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
   const [serviceType, setServiceType] = useState('Minor Scheduled Service');
   const [preferredDate, setPreferredDate] = useState(getNextBusinessDayISO);
   const [vehicleReg, setVehicleReg] = useState('');
@@ -78,12 +81,6 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
     setErrorSummary('');
     setSubmittedRef(null);
   }, [initialTab]);
-
-  useEffect(() => {
-    if (activeVehicles.length > 0 && !activeVehicles.some((v) => v.title === selectedModel)) {
-      setSelectedModel(activeVehicles[0].title);
-    }
-  }, [activeVehicles, selectedModel]);
 
   const todayISO = useMemo(() => getTodayISO(), []);
   const selectedDay = useMemo(() => getDayOfWeek(preferredDate), [preferredDate]);
@@ -111,6 +108,8 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
     }
   };
 
+  const typedVehicleLabel = [vehicleYear.trim(), vehicleModel.trim()].filter(Boolean).join(' ');
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: FieldErrorMap = {};
@@ -123,12 +122,23 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
       errors.email = 'Enter a valid email address.';
     }
 
-    if (!vehicleReg.trim()) errors.vehicleReg = 'Vehicle registration number is required.';
-    if (vinNumber.trim().length < 6) {
-      errors.vinNumber = 'Valid VIN number is required.';
-    }
+    const hasValidVin = vinNumber.trim().length >= 6;
+    const hasYear = /^\d{4}$/.test(vehicleYear.trim());
+    const hasModelName = vehicleModel.trim().length >= 2;
+    const hasTypedModel = hasYear && hasModelName;
 
     if (activeTab === 'service') {
+      // VIN is mandatory for service bookings
+      if (!hasValidVin) {
+        errors.vinNumber =
+          'VIN number is mandatory for service bookings so technicians verify your exact VW / Audi / Porsche service specification.';
+      }
+      if (!vehicleReg.trim()) {
+        errors.vehicleReg = 'Vehicle registration number is required.';
+      }
+      if (vehicleYear.trim() && !hasYear) {
+        errors.vehicleYear = 'Enter a 4-digit vehicle year (e.g. 2021).';
+      }
       if (!mileageKm.trim() || Number(mileageKm) <= 0 || Number.isNaN(Number(mileageKm))) {
         errors.mileageKm = 'Current mileage (km) is required.';
       }
@@ -137,10 +147,30 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
       } else if (isSunday) {
         errors.preferredDate = `Workshop closed on Sundays. Service Hours: ${activeDealership.serviceHours}.`;
       }
-    }
+    } else {
+      // Parts: Identify car by VIN OR Model (typed year + car name)
+      if (!hasValidVin && !hasTypedModel) {
+        if (!vinNumber.trim() && !vehicleYear.trim() && !vehicleModel.trim()) {
+          errors.vinNumber =
+            'Identify your VAG vehicle by entering your VIN number OR typing the Vehicle Year and Make/Model.';
+          errors.vehicleYear = 'Required if VIN number is not provided.';
+          errors.vehicleModel = 'Required if VIN number is not provided.';
+        } else if (!hasValidVin) {
+          if (vinNumber.trim().length > 0 && vinNumber.trim().length < 6) {
+            errors.vinNumber = 'Enter at least 6 characters (17-character VIN recommended).';
+          }
+          if (!hasYear) {
+            errors.vehicleYear = 'Enter a 4-digit year (e.g. 2019), or provide a VIN.';
+          }
+          if (!hasModelName) {
+            errors.vehicleModel = 'Type the make & model (e.g. Audi Q5 / VW Golf), or provide a VIN.';
+          }
+        }
+      }
 
-    if (activeTab === 'parts' && !notes.trim()) {
-      errors.notes = 'Specify the required part description or OEM part number.';
+      if (!notes.trim()) {
+        errors.notes = 'Specify the required part description or OEM part number.';
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -159,6 +189,9 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
     setErrorSummary('');
     setSubmittedRef(ref);
 
+    const vehicleDescriptor =
+      typedVehicleLabel || (vinNumber.trim() ? `VIN ${vinNumber.trim()}` : 'VAG Group Vehicle');
+
     await submitLead({
       id: ref.toLowerCase(),
       leadType: activeTab,
@@ -167,12 +200,12 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
       email,
       subject:
         activeTab === 'service'
-          ? `${serviceType} — ${selectedModel}`
-          : `Genuine Parts Enquiry — ${selectedModel}`,
+          ? `${serviceType} — ${vehicleDescriptor}`
+          : `Genuine VAG Parts Enquiry — ${vehicleDescriptor}`,
       details:
         activeTab === 'service'
-          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Drop-off: ${preferredDate} | Notes: ${notes || 'None'}`
-          : `Reg: ${vehicleReg} | VIN: ${vinNumber} | Part Needed: ${notes}`,
+          ? `Vehicle: ${typedVehicleLabel || 'Identified by VIN'} | Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Drop-off: ${preferredDate} | Notes: ${notes || 'None'}`
+          : `Vehicle: ${typedVehicleLabel || 'Identified by VIN'} | VIN: ${vinNumber || 'Not provided'} | Reg: ${vehicleReg || 'Not provided'} | Part Needed: ${notes}`,
       homeDealershipId: activeDealership.id,
     });
   };
@@ -181,9 +214,9 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
     <div className="bg-[#F8FAFC] pt-24 pb-20">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-12">
         <SectionHeader
-          kicker="Aftersales Hub · Service & Genuine Parts"
-          title={`${activeDealership.shortName} Workshop Service & Genuine VW Parts`}
-          description={`Grouped aftersales care at ${activeDealership.physicalAddress}. Schedule factory-certified maintenance or order VIN-matched OEM components from one streamlined page.`}
+          kicker="Aftersales Hub · Volkswagen Group (VAG) Service & Genuine Parts"
+          title={`${activeDealership.shortName} Workshop Service & Genuine VAG Parts`}
+          description={`Grouped aftersales care at ${activeDealership.physicalAddress}. We service and supply genuine OEM parts for all Volkswagen Group vehicles—including Volkswagen, Audi, Porsche, VW Commercial, SEAT, and Škoda.`}
         />
 
         {/* Two-Column Overview Cards */}
@@ -207,23 +240,23 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                   <div className="flex items-center gap-2 text-[#001E50]">
                     <Wrench className="h-4 w-4" />
                     <span className="text-xs font-semibold tracking-wider uppercase">
-                      Approved Workshop
+                      Approved VAG Workshop
                     </span>
                   </div>
                   <h2 className="mt-3 font-display text-2xl font-semibold text-[#091224]">
-                    Volkswagen Service Centre
+                    Volkswagen &amp; VAG Group Service Centre
                   </h2>
                   <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                    Minor &amp; major scheduled services, warranty repairs, wheel alignment, and multi-point diagnostics backed by VW factory tooling at {activeDealership.name}.
+                    Minor &amp; major scheduled services, warranty repairs, wheel alignment, and factory diagnostics for Volkswagen, Audi, Porsche, and VW Commercial vehicles at {activeDealership.name}.
                   </p>
                   <ul className="mt-4 space-y-2 text-sm text-[#334155]">
                     <li className="flex items-center gap-2">
                       <Check className="h-4 w-4 text-[#00437A]" />
-                      <span>Factory-trained master technicians</span>
+                      <span>Factory-trained technicians &amp; VAG diagnostic tooling</span>
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="h-4 w-4 text-[#00437A]" />
-                      <span>Digital service history &amp; warranty protection</span>
+                      <span>VIN-verified service intervals &amp; digital service records</span>
                     </li>
                   </ul>
                 </div>
@@ -251,7 +284,7 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
             >
               <DealershipImage
                 asset={SERVICE_PARTS_ASSETS.parts}
-                alt={`Genuine Volkswagen Parts & Accessories — ${activeDealership.shortName}`}
+                alt={`Genuine Volkswagen Group Parts & Accessories — ${activeDealership.shortName}`}
                 className="border-b border-[#E2E8F0]"
               />
               <div className="flex flex-1 flex-col justify-between p-6 sm:p-8">
@@ -259,23 +292,23 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                   <div className="flex items-center gap-2 text-[#001E50]">
                     <Cog className="h-4 w-4" />
                     <span className="text-xs font-semibold tracking-wider uppercase">
-                      Parts &amp; Accessories
+                      VAG Parts &amp; Accessories
                     </span>
                   </div>
                   <h2 className="mt-3 font-display text-2xl font-semibold text-[#091224]">
-                    Genuine Volkswagen Parts
+                    Genuine VW, Audi &amp; Porsche Parts
                   </h2>
                   <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                    Direct counter supply at {activeDealership.shortName} for private owners, panel beaters, and commercial fleets—matched precisely to your VIN before ordering.
+                    Direct counter supply at {activeDealership.shortName} across all Volkswagen Group (VAG) brands—including VW, Audi, Porsche, SEAT &amp; Škoda—matched accurately via VIN or model &amp; year.
                   </p>
                   <ul className="mt-4 space-y-2 text-sm text-[#334155]">
                     <li className="flex items-center gap-2">
                       <Check className="h-4 w-4 text-[#00437A]" />
-                      <span>2-year unlimited-kilometre OEM parts warranty</span>
+                      <span>2-year unlimited-kilometre Genuine OEM warranty</span>
                     </li>
                     <li className="flex items-center gap-2">
                       <Check className="h-4 w-4 text-[#00437A]" />
-                      <span>Parts Sales Executive callback verification</span>
+                      <span>VIN-matched ETKA part verification callback before ordering</span>
                     </li>
                   </ul>
                 </div>
@@ -285,7 +318,7 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                     variant={activeTab === 'parts' ? 'primary' : 'outline'}
                     onClick={() => handleTabSwitch('parts')}
                   >
-                    Request Genuine Parts Below
+                    Request Genuine VAG Parts Below
                   </Button>
                 </div>
               </div>
@@ -304,12 +337,22 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                 {activeDealership.shortName} Aftersales Desk
               </p>
               <h3 className="mt-2 font-display text-2xl font-semibold text-[#091224]">
-                {activeTab === 'service' ? 'Schedule Workshop Service' : 'Request OEM Parts'}
+                {activeTab === 'service' ? 'Schedule Workshop Service' : 'Request VAG OEM Parts'}
               </h3>
               <p className="mt-2 text-sm leading-relaxed text-[#475569]">
                 {activeTab === 'service'
-                  ? 'Provide your registration, VIN, and odometer reading so a Service Advisor can confirm your arrival slot.'
-                  : 'Provide your registration, VIN, and required part details so our Parts Sales Executive can verify fitment and pricing before ordering.'}
+                  ? 'Provide your mandatory VIN number, registration, and odometer reading so a Service Advisor can verify exact parts and confirm your arrival slot.'
+                  : 'Identify your vehicle by VIN number (recommended) or by typing your Year and Make/Model. Our Parts Sales Executive will verify VAG fitment and pricing before ordering.'}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-[#CFE0F5] bg-[#EFF6FF] p-4 space-y-1.5 text-xs text-[#001E50]">
+              <div className="flex items-center gap-2 font-semibold">
+                <Info className="h-4 w-4 shrink-0 text-[#00437A]" />
+                <span>All VAG Marques Supported</span>
+              </div>
+              <p className="leading-relaxed text-[#334155]">
+                We service and supply genuine parts for <strong className="text-[#091224]">Volkswagen, Audi, Porsche, VW Commercial, SEAT &amp; Škoda</strong>. Because platform parts vary by engine and build code, your 17-digit VIN ensures 100% accuracy.
               </p>
             </div>
 
@@ -349,7 +392,7 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                     : 'text-[#475569] hover:text-[#091224]'
                 )}
               >
-                Genuine Parts Request
+                Genuine VAG Parts Request
               </button>
             </div>
 
@@ -370,16 +413,16 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                   <span className="font-mono text-[#091224]">{phone}</span>{' '}
                   {activeTab === 'service'
                     ? `to confirm your ${serviceType} drop-off time on ${preferredDate}.`
-                    : 'to verify fitment and pricing before placing your OEM parts order.'}
+                    : 'to verify VAG fitment and pricing before placing your OEM parts order.'}
                 </p>
                 <div className="rounded-lg border border-[#E2E8F0] bg-white p-4 font-mono text-xs text-[#334155] space-y-1">
                   <p>
                     Reference: <strong className="text-[#001E50]">{submittedRef}</strong>
                   </p>
                   <p>Branch: {activeDealership.name}</p>
-                  <p>Model: {selectedModel}</p>
-                  <p>Registration: {vehicleReg}</p>
-                  <p>VIN: {vinNumber}</p>
+                  {typedVehicleLabel && <p>Vehicle: {typedVehicleLabel}</p>}
+                  {vehicleReg.trim() && <p>Registration: {vehicleReg}</p>}
+                  {vinNumber.trim() && <p>VIN: {vinNumber}</p>}
                   {activeTab === 'service' && (
                     <>
                       <p>Service Type: {serviceType}</p>
@@ -469,47 +512,104 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label htmlFor="aftersales-model">Volkswagen Model</Label>
-                    <Select
-                      id="aftersales-model"
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                    >
-                      {activeVehicles.map((v) => (
-                        <option key={v.id} value={v.title}>
-                          {v.title}
-                        </option>
-                      ))}
-                    </Select>
+                {/* Vehicle Identification Block */}
+                <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E2E8F0] pb-2.5">
+                    <p className="text-xs font-semibold text-[#001E50]">
+                      Vehicle Identification (VW, Audi, Porsche &amp; VAG Group)
+                    </p>
+                    <span className="text-[11px] font-medium text-[#475569]">
+                      {activeTab === 'service'
+                        ? 'VIN Number is mandatory · Optionally add Year & Model'
+                        : 'Provide VIN Number OR type Vehicle Year & Make/Model'}
+                    </span>
                   </div>
 
-                  {activeTab === 'service' && (
-                    <div>
-                      <Label htmlFor="aftersales-service-type">Service Type *</Label>
-                      <Select
-                        id="aftersales-service-type"
-                        value={serviceType}
-                        onChange={(e) => setServiceType(e.target.value)}
-                      >
-                        <option>Minor Scheduled Service</option>
-                        <option>Major Scheduled Service</option>
-                        <option>Warranty Repair</option>
-                        <option>Mechanical Diagnostics &amp; Repairs</option>
-                      </Select>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-12">
+                    <div className="sm:col-span-5">
+                      <Label htmlFor="aftersales-vin">
+                        VIN Number {activeTab === 'service' ? '*' : '(Recommended)'}
+                      </Label>
+                      <Input
+                        id="aftersales-vin"
+                        value={vinNumber}
+                        placeholder="17-digit VAG VIN (e.g. WVW... / WAU...)"
+                        className={cn('bg-white font-mono', fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
+                        onChange={(e) => {
+                          setVinNumber(e.target.value.toUpperCase());
+                          clearError('vinNumber');
+                          if (activeTab === 'parts') {
+                            clearError('vehicleYear');
+                            clearError('vehicleModel');
+                          }
+                        }}
+                      />
+                      {fieldErrors.vinNumber && (
+                        <p className="mt-1 text-[11px] font-medium text-red-700">
+                          {fieldErrors.vinNumber}
+                        </p>
+                      )}
                     </div>
-                  )}
+
+                    <div className="sm:col-span-2">
+                      <Label htmlFor="aftersales-year">
+                        Year {activeTab === 'parts' && vinNumber.trim().length < 6 ? '*' : ''}
+                      </Label>
+                      <Input
+                        id="aftersales-year"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={4}
+                        value={vehicleYear}
+                        placeholder="e.g. 2019"
+                        className={cn('bg-white font-mono', fieldErrors.vehicleYear && ERROR_INPUT_CLASS)}
+                        onChange={(e) => {
+                          setVehicleYear(e.target.value.replace(/[^\d]/g, '').slice(0, 4));
+                          clearError('vehicleYear');
+                          if (activeTab === 'parts') clearError('vinNumber');
+                        }}
+                      />
+                      {fieldErrors.vehicleYear && (
+                        <p className="mt-1 text-[11px] font-medium text-red-700">
+                          {fieldErrors.vehicleYear}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="sm:col-span-5">
+                      <Label htmlFor="aftersales-model-text">
+                        Car Make &amp; Model {activeTab === 'parts' && vinNumber.trim().length < 6 ? '*' : ''}
+                      </Label>
+                      <Input
+                        id="aftersales-model-text"
+                        value={vehicleModel}
+                        placeholder="e.g. VW Golf 7 GTI / Audi Q5 / Porsche Macan"
+                        className={cn('bg-white', fieldErrors.vehicleModel && ERROR_INPUT_CLASS)}
+                        onChange={(e) => {
+                          setVehicleModel(e.target.value);
+                          clearError('vehicleModel');
+                          if (activeTab === 'parts') clearError('vinNumber');
+                        }}
+                      />
+                      {fieldErrors.vehicleModel && (
+                        <p className="mt-1 text-[11px] font-medium text-red-700">
+                          {fieldErrors.vehicleModel}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div
                   className={cn(
                     'grid grid-cols-1 gap-4',
-                    activeTab === 'service' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'
+                    activeTab === 'service' ? 'sm:grid-cols-3' : 'sm:grid-cols-1'
                   )}
                 >
                   <div>
-                    <Label htmlFor="aftersales-reg">Vehicle Registration *</Label>
+                    <Label htmlFor="aftersales-reg">
+                      Vehicle Registration {activeTab === 'service' ? '*' : '(Optional)'}
+                    </Label>
                     <Input
                       id="aftersales-reg"
                       value={vehicleReg}
@@ -526,46 +626,44 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                       </p>
                     )}
                   </div>
-                  <div>
-                    <Label htmlFor="aftersales-vin">VIN Number *</Label>
-                    <Input
-                      id="aftersales-vin"
-                      value={vinNumber}
-                      placeholder="17-digit VIN"
-                      className={cn(fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
-                      onChange={(e) => {
-                        setVinNumber(e.target.value.toUpperCase());
-                        clearError('vinNumber');
-                      }}
-                    />
-                    {fieldErrors.vinNumber && (
-                      <p className="mt-1 text-[11px] font-medium text-red-700">
-                        {fieldErrors.vinNumber}
-                      </p>
-                    )}
-                  </div>
 
                   {activeTab === 'service' && (
-                    <div>
-                      <Label htmlFor="aftersales-mileage">Current Mileage (km) *</Label>
-                      <Input
-                        id="aftersales-mileage"
-                        type="number"
-                        min={1}
-                        value={mileageKm}
-                        placeholder="e.g. 45000"
-                        className={cn(fieldErrors.mileageKm && ERROR_INPUT_CLASS)}
-                        onChange={(e) => {
-                          setMileageKm(e.target.value);
-                          clearError('mileageKm');
-                        }}
-                      />
-                      {fieldErrors.mileageKm && (
-                        <p className="mt-1 text-[11px] font-medium text-red-700">
-                          {fieldErrors.mileageKm}
-                        </p>
-                      )}
-                    </div>
+                    <>
+                      <div>
+                        <Label htmlFor="aftersales-service-type">Service Type *</Label>
+                        <Select
+                          id="aftersales-service-type"
+                          value={serviceType}
+                          onChange={(e) => setServiceType(e.target.value)}
+                        >
+                          <option>Minor Scheduled Service</option>
+                          <option>Major Scheduled Service</option>
+                          <option>Warranty Repair</option>
+                          <option>Mechanical Diagnostics &amp; Repairs</option>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="aftersales-mileage">Current Mileage (km) *</Label>
+                        <Input
+                          id="aftersales-mileage"
+                          type="number"
+                          min={1}
+                          value={mileageKm}
+                          placeholder="e.g. 45000"
+                          className={cn(fieldErrors.mileageKm && ERROR_INPUT_CLASS)}
+                          onChange={(e) => {
+                            setMileageKm(e.target.value);
+                            clearError('mileageKm');
+                          }}
+                        />
+                        {fieldErrors.mileageKm && (
+                          <p className="mt-1 text-[11px] font-medium text-red-700">
+                            {fieldErrors.mileageKm}
+                          </p>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
 
@@ -606,7 +704,7 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
                     className={cn(fieldErrors.notes && ERROR_INPUT_CLASS)}
                     placeholder={
                       activeTab === 'parts'
-                        ? 'Describe the OEM part or accessory required (model year, engine, part number)...'
+                        ? 'Describe the OEM part or accessory required (engine code, front/rear, OEM part number if known)...'
                         : 'Any specific faults, brake checks, or shuttle requirements...'
                     }
                     onChange={(e) => {

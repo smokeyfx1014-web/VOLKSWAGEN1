@@ -1,16 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, ShieldCheck } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { FINANCE_SECTION_ASSET } from '../data/dealership';
 import { calculateMonthlyFinance, formatZAR } from '../lib/utils';
-import { DealershipId } from '../types/dealership';
+import { AppRoute, DealershipId } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
+import {
+  FinanceApplicationWizard,
+  FinanceSimulatorSnapshot,
+} from './FinanceApplicationWizard';
 import { FadeUp } from './MotionPrimitives';
-import { Button, Label, Select } from './ui/shadcn';
+import { Button, Input, Label, Select } from './ui/shadcn';
 
 interface FinanceSectionProps {
-  onApplyFinance: (preset: {
+  onNavigate?: (route: AppRoute) => void;
+  onApplyFinance?: (preset: {
     vehicleName: string;
     vehiclePrice: number;
     homeDealershipId?: DealershipId | null;
@@ -21,9 +26,11 @@ interface FinanceSectionProps {
   }) => void;
 }
 
-export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
+export function FinanceSection({ onNavigate, onApplyFinance }: FinanceSectionProps) {
   const { activeDealership, dealershipsById } = useDealership();
   const { activeVehicles } = useDealershipData();
+
+  const wizardRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedVehicleId, setSelectedVehicleId] = useState(
     activeVehicles[0]?.id ?? 'polo-vivo'
@@ -34,8 +41,8 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
   const [vehiclePrice, setVehiclePrice] = useState(selectedVehicle?.price ?? 271900);
   const [depositPercent, setDepositPercent] = useState(10);
   const [balloonPercent, setBalloonPercent] = useState(30);
-  const [termMonths, setTermMonths] = useState(60);
-  const [interestRate, setInterestRate] = useState(11.75);
+  const [termMonths, setTermMonths] = useState(72);
+  const [interestRate, setInterestRate] = useState(10.25);
 
   useEffect(() => {
     if (selectedVehicle && !activeVehicles.some((v) => v.id === selectedVehicleId)) {
@@ -63,6 +70,49 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
       }),
     [vehiclePrice, depositPercent, balloonPercent, interestRate, termMonths]
   );
+
+  const simulatorSnapshot: FinanceSimulatorSnapshot = useMemo(
+    () => ({
+      selectedVehicleId: selectedVehicle?.id ?? 'custom',
+      vehicleName: selectedVehicle?.title ?? 'Volkswagen Vehicle',
+      vehiclePrice,
+      depositAmount: result.depositAmount,
+      depositPercent,
+      balloonPercent,
+      interestRate,
+      termMonths,
+      monthlyInstalment: result.monthlyInstalment,
+      homeDealershipId: selectedVehicle?.homeDealershipId ?? activeDealership.id,
+    }),
+    [
+      selectedVehicle,
+      vehiclePrice,
+      result.depositAmount,
+      result.monthlyInstalment,
+      depositPercent,
+      balloonPercent,
+      interestRate,
+      termMonths,
+      activeDealership.id,
+    ]
+  );
+
+  const handleSyncFromWizard = (patch: {
+    selectedVehicleId?: string;
+    vehiclePrice?: number;
+    depositAmount?: number;
+  }) => {
+    if (patch.selectedVehicleId) {
+      setSelectedVehicleId(patch.selectedVehicleId);
+    }
+    if (typeof patch.vehiclePrice === 'number' && patch.vehiclePrice > 0) {
+      setVehiclePrice(patch.vehiclePrice);
+    }
+    if (typeof patch.depositAmount === 'number' && vehiclePrice > 0) {
+      const pct = Math.min(40, Math.max(0, Math.round((patch.depositAmount / vehiclePrice) * 100)));
+      setDepositPercent(pct);
+    }
+  };
 
   return (
     <section
@@ -114,17 +164,17 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
             </div>
           </FadeUp>
 
-          {/* Right Column: Interactive Rand Finance Calculator */}
+          {/* Right Column: Synchronized Interactive Rand Finance Calculator */}
           <FadeUp delay={0.1} className="lg:col-span-7">
             <div className="flex h-full flex-col justify-between rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-6 sm:p-8">
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E2E8F0] pb-5">
                   <div>
                     <h3 className="font-display text-xl font-semibold text-[#091224]">
-                      Interactive Instalment Estimator
+                      Interactive Loan Simulator
                     </h3>
                     <p className="mt-1 text-xs text-[#475569]">
-                      Indicative South African Rand (ZAR) calculation · Subject to bank approval
+                      Synced live with your 4-step online finance application below
                     </p>
                   </div>
                   <div className="text-right">
@@ -156,39 +206,38 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                   </div>
 
                   <div>
-                    <Label htmlFor="finance-term-select">Repayment Term</Label>
-                    <Select
-                      id="finance-term-select"
-                      value={termMonths}
-                      onChange={(e) => setTermMonths(Number(e.target.value))}
-                    >
-                      {[36, 48, 60, 72].map((m) => (
-                        <option key={m} value={m}>
-                          {m} Months ({m / 12} Years)
-                        </option>
-                      ))}
-                    </Select>
+                    <Label htmlFor="finance-price-input">Vehicle Price (ZAR)</Label>
+                    <Input
+                      id="finance-price-input"
+                      type="number"
+                      min={50000}
+                      max={3000000}
+                      step={5000}
+                      value={vehiclePrice}
+                      onChange={(e) => setVehiclePrice(Math.max(0, Number(e.target.value)))}
+                      className="font-mono bg-white"
+                    />
                   </div>
                 </div>
 
                 <div className="mt-6 space-y-5">
                   <div>
                     <div className="flex justify-between text-xs font-medium">
-                      <label htmlFor="price-range" className="text-[#334155]">
-                        Vehicle Price
+                      <label htmlFor="months-range" className="text-[#334155]">
+                        Months ({termMonths / 12} {termMonths === 12 ? 'Year' : 'Years'})
                       </label>
-                      <span className="font-mono text-[#091224] tabular-nums">
-                        {formatZAR(vehiclePrice)}
+                      <span className="font-mono font-semibold text-[#091224] tabular-nums">
+                        {termMonths} Months
                       </span>
                     </div>
                     <input
-                      id="price-range"
+                      id="months-range"
                       type="range"
-                      min={250000}
-                      max={1500000}
-                      step={5000}
-                      value={vehiclePrice}
-                      onChange={(e) => setVehiclePrice(Number(e.target.value))}
+                      min={12}
+                      max={72}
+                      step={12}
+                      value={termMonths}
+                      onChange={(e) => setTermMonths(Number(e.target.value))}
                       className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-lg bg-[#E2E8F0] accent-[#001E50]"
                     />
                   </div>
@@ -197,10 +246,10 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                     <div>
                       <div className="flex justify-between text-xs font-medium">
                         <label htmlFor="deposit-range" className="text-[#334155]">
-                          Deposit ({depositPercent}%)
+                          Deposit Amount
                         </label>
                         <span className="font-mono text-[#091224] tabular-nums">
-                          {formatZAR(result.depositAmount)}
+                          {depositPercent.toFixed(2)} % ({formatZAR(result.depositAmount)})
                         </span>
                       </div>
                       <input
@@ -217,11 +266,32 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
 
                     <div>
                       <div className="flex justify-between text-xs font-medium">
-                        <label htmlFor="balloon-range" className="text-[#334155]">
-                          Balloon ({balloonPercent}%)
+                        <label htmlFor="rate-range" className="text-[#334155]">
+                          Interest
                         </label>
                         <span className="font-mono text-[#091224] tabular-nums">
-                          {formatZAR(result.balloonAmount)}
+                          {interestRate.toFixed(2)} %
+                        </span>
+                      </div>
+                      <input
+                        id="rate-range"
+                        type="range"
+                        min={9.5}
+                        max={16.5}
+                        step={0.25}
+                        value={interestRate}
+                        onChange={(e) => setInterestRate(Number(e.target.value))}
+                        className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-lg bg-[#E2E8F0] accent-[#001E50]"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-xs font-medium">
+                        <label htmlFor="balloon-range" className="text-[#334155]">
+                          Balloon
+                        </label>
+                        <span className="font-mono text-[#091224] tabular-nums">
+                          {balloonPercent.toFixed(2)} % ({formatZAR(result.balloonAmount)})
                         </span>
                       </div>
                       <input
@@ -235,33 +305,12 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                         className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-lg bg-[#E2E8F0] accent-[#001E50]"
                       />
                     </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs font-medium">
-                        <label htmlFor="rate-range" className="text-[#334155]">
-                          Interest Rate
-                        </label>
-                        <span className="font-mono text-[#091224] tabular-nums">
-                          {interestRate.toFixed(2)}%
-                        </span>
-                      </div>
-                      <input
-                        id="rate-range"
-                        type="range"
-                        min={9.5}
-                        max={15.5}
-                        step={0.25}
-                        value={interestRate}
-                        onChange={(e) => setInterestRate(Number(e.target.value))}
-                        className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-lg bg-[#E2E8F0] accent-[#001E50]"
-                      />
-                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-8 border-t border-[#E2E8F0] pt-6">
-                <dl className="grid grid-cols-2 gap-4 text-xs sm:grid-cols-3 mb-6">
+              <div className="mt-6 border-t border-[#E2E8F0] pt-5 space-y-5">
+                <dl className="grid grid-cols-2 gap-4 text-xs sm:grid-cols-3">
                   <div>
                     <dt className="text-[#64748B]">Principal Financed</dt>
                     <dd className="mt-1 font-mono text-sm font-semibold text-[#091224] tabular-nums">
@@ -282,32 +331,68 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                   </div>
                 </dl>
 
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <p className="text-xs text-[#64748B] max-w-md leading-relaxed">
-                    Non-binding loan simulator; excludes on-the-road &amp; documentation fees. {activeDealership.legalEntity} t/a {activeDealership.name} is an Authorised Financial Services Provider (FSP No. {activeDealership.fspNumber}).
+                {/* Complete Legal Terms & Conditions from Legacy Site */}
+                <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 text-[11px] leading-relaxed text-[#475569] space-y-2">
+                  <p className="text-xs font-semibold text-[#001E50]">Terms &amp; Conditions</p>
+                  <p>
+                    <strong className="text-[#091224]">Instalments</strong> are indicative only and are based on certain assumptions and approximations that may not apply to all customers.
                   </p>
+                  <p>
+                    The finance calculator is a form of loan simulator and is not an offer by the seller, nor does it constitute financial advice in any form or manner. The finance calculator is provided to you for information and convenience purposes only. The finance calculator will not pre-qualify you for any loan programs whatsoever.
+                  </p>
+                  <p>
+                    Actual instalments on loans obtained from financial institutions will vary depending on: the current prime interest rate, the financial institution&apos;s variables, the type, condition and age of the vehicle, your credit rating with the financial institution concerned, the respective initiation fees and the time period between the effective date of the loan and the first instalment payable. Please note that you should seek appropriate financial advice before concluding any loan agreements.
+                  </p>
+                  <p className="pt-2 border-t border-[#F1F5F9] font-medium text-[#00437A]">
+                    Protected by Docrat group Information Technology · {activeDealership.legalEntity} t/a {activeDealership.name} (Authorised FSP No. {activeDealership.fspNumber})
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  {onApplyFinance && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onApplyFinance({
+                          vehicleName: selectedVehicle?.title ?? 'Volkswagen Vehicle',
+                          vehiclePrice,
+                          homeDealershipId:
+                            selectedVehicle?.homeDealershipId ?? activeDealership.id,
+                          depositPercent,
+                          balloonPercent,
+                          termMonths,
+                          monthlyEstimate: Math.round(result.monthlyInstalment),
+                        })
+                      }
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#00437A] hover:text-[#001E50] hover:underline cursor-pointer"
+                    >
+                      <span>Prefer a quick callback instead? Request F&amp;I Callback</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+
                   <Button
                     size="lg"
                     onClick={() =>
-                      onApplyFinance({
-                        vehicleName: selectedVehicle?.title ?? 'Volkswagen Vehicle',
-                        vehiclePrice,
-                        homeDealershipId: selectedVehicle?.homeDealershipId ?? activeDealership.id,
-                        depositPercent,
-                        balloonPercent,
-                        termMonths,
-                        monthlyEstimate: Math.round(result.monthlyInstalment),
-                      })
+                      wizardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
                     }
                   >
-                    <span>Apply for Finance</span>
-                    <ArrowRight className="h-4 w-4" />
+                    <span>Start Full 4-Step Application</span>
+                    <ArrowDown className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
             </div>
           </FadeUp>
         </div>
+
+        {/* Full 4-Step FSP / NCA Credit Application */}
+        <FinanceApplicationWizard
+          simulator={simulatorSnapshot}
+          onSyncFromWizard={handleSyncFromWizard}
+          onNavigate={onNavigate}
+          wizardRef={wizardRef}
+        />
       </div>
     </section>
   );

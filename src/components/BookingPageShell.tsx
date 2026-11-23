@@ -21,6 +21,8 @@ type FieldErrorMap = Partial<
     | 'fullName'
     | 'phone'
     | 'email'
+    | 'vehicleYear'
+    | 'vehicleModel'
     | 'vehicleReg'
     | 'vinNumber'
     | 'mileageKm'
@@ -65,6 +67,8 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
   const [selectedModel, setSelectedModel] = useState(
     activeVehicles[0]?.title ?? '2026 Volkswagen Polo Vivo 1.4 Life'
   );
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
   const [serviceType, setServiceType] = useState('Minor Scheduled Service');
   const [preferredDate, setPreferredDate] = useState(getNextBusinessDayISO);
   const [preferredTime, setPreferredTime] = useState('09:00');
@@ -137,9 +141,14 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
       }
     }
 
+    const hasValidVin = vinNumber.trim().length >= 6;
+    const hasYear = /^\d{4}$/.test(vehicleYear.trim());
+    const hasModelName = vehicleModel.trim().length >= 2;
+
     if (mode === 'service') {
       if (!vehicleReg.trim()) errors.vehicleReg = 'Vehicle registration number is required.';
-      if (vinNumber.trim().length < 6) errors.vinNumber = 'Valid VIN number is required.';
+      if (!hasValidVin) errors.vinNumber = 'VIN number is mandatory for service bookings.';
+      if (vehicleYear.trim() && !hasYear) errors.vehicleYear = 'Enter a 4-digit year (e.g. 2019).';
       if (!mileageKm.trim() || Number(mileageKm) <= 0) {
         errors.mileageKm = 'Current mileage (km) is required.';
       }
@@ -151,8 +160,17 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
     }
 
     if (mode === 'parts') {
-      if (!vehicleReg.trim()) errors.vehicleReg = 'Vehicle registration number is required.';
-      if (vinNumber.trim().length < 6) errors.vinNumber = 'VIN number is required for OEM fitment.';
+      if (!hasValidVin && !(hasYear && hasModelName)) {
+        if (!vinNumber.trim() && !vehicleYear.trim() && !vehicleModel.trim()) {
+          errors.vinNumber = 'Enter VIN number OR type Vehicle Year & Make/Model.';
+          errors.vehicleYear = 'Required if VIN is not entered.';
+          errors.vehicleModel = 'Required if VIN is not entered.';
+        } else {
+          if (vinNumber.trim() && !hasValidVin) errors.vinNumber = 'Enter at least 6 characters.';
+          if (!hasYear) errors.vehicleYear = 'Enter 4-digit year or provide VIN.';
+          if (!hasModelName) errors.vehicleModel = 'Enter make & model or provide VIN.';
+        }
+      }
       if (!notes.trim()) errors.notes = 'Specify the part description or part number.';
     }
 
@@ -171,6 +189,9 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
     setSubmittedRef(ref);
 
     const matchedVehicle = activeVehicles.find((v) => v.title === selectedModel);
+    const typedVagLabel = [vehicleYear.trim(), vehicleModel.trim()].filter(Boolean).join(' ');
+    const aftersalesTitle =
+      typedVagLabel || (vinNumber.trim() ? `VIN ${vinNumber.trim()}` : 'VAG Group Vehicle');
 
     void submitLead({
       id: ref.toLowerCase(),
@@ -182,14 +203,14 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
         mode === 'test-drive'
           ? `Test Drive — ${selectedModel}`
           : mode === 'service'
-          ? `${serviceType} — ${selectedModel}`
-          : `Genuine Parts — ${selectedModel}`,
+          ? `${serviceType} — ${aftersalesTitle}`
+          : `Genuine VAG Parts — ${aftersalesTitle}`,
       details:
         mode === 'test-drive'
           ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
           : mode === 'service'
-          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
-          : `Reg: ${vehicleReg} | VIN: ${vinNumber} | Part Required: ${notes}`,
+          ? `Vehicle: ${typedVagLabel || 'Identified by VIN'} | Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
+          : `Vehicle: ${typedVagLabel || 'Identified by VIN'} | VIN: ${vinNumber || 'Not provided'} | Reg: ${vehicleReg || 'Not provided'} | Part Required: ${notes}`,
       homeDealershipId:
         mode === 'test-drive'
           ? matchedVehicle?.homeDealershipId ?? activeDealership.id
@@ -286,11 +307,20 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                       Reference: <span className="font-semibold text-[#001E50]">{submittedRef}</span>
                     </p>
                     <p>Branch: {activeDealership.name}</p>
-                    <p>Model: {selectedModel}</p>
+                    {mode === 'test-drive' ? (
+                      <p>Model: {selectedModel}</p>
+                    ) : (
+                      (vehicleYear.trim() || vehicleModel.trim()) && (
+                        <p>
+                          Vehicle:{' '}
+                          {[vehicleYear.trim(), vehicleModel.trim()].filter(Boolean).join(' ')}
+                        </p>
+                      )
+                    )}
                     {(mode === 'service' || mode === 'parts') && (
                       <>
-                        <p>Registration: {vehicleReg}</p>
-                        <p>VIN: {vinNumber}</p>
+                        {vehicleReg.trim() && <p>Registration: {vehicleReg}</p>}
+                        {vinNumber.trim() && <p>VIN: {vinNumber}</p>}
                       </>
                     )}
                     {mode === 'service' && (
@@ -380,20 +410,22 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                         </p>
                       )}
                     </div>
-                    <div>
-                      <Label htmlFor="page-model">Volkswagen Model</Label>
-                      <Select
-                        id="page-model"
-                        value={selectedModel}
-                        onChange={(e) => setSelectedModel(e.target.value)}
-                      >
-                        {activeVehicles.map((m) => (
-                          <option key={m.id} value={m.title}>
-                            {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
+                    {mode === 'test-drive' && (
+                      <div>
+                        <Label htmlFor="page-model">Volkswagen Model</Label>
+                        <Select
+                          id="page-model"
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                        >
+                          {activeVehicles.map((m) => (
+                            <option key={m.id} value={m.title}>
+                              {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                    )}
                   </div>
 
                   {mode === 'service' && (
@@ -413,70 +445,126 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                   )}
 
                   {(mode === 'service' || mode === 'parts') && (
-                    <div
-                      className={cn(
-                        'grid grid-cols-1 gap-4',
-                        mode === 'service' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'
-                      )}
-                    >
-                      <div>
-                        <Label htmlFor="page-reg">Vehicle Registration *</Label>
-                        <Input
-                          id="page-reg"
-                          value={vehicleReg}
-                          placeholder="e.g. NN 45210"
-                          className={cn(fieldErrors.vehicleReg && ERROR_INPUT_CLASS)}
-                          onChange={(e) => {
-                            setVehicleReg(e.target.value);
-                            clearError('vehicleReg');
-                          }}
-                        />
-                        {fieldErrors.vehicleReg && (
-                          <p className="mt-1 text-[11px] font-medium text-red-700">
-                            {fieldErrors.vehicleReg}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <Label htmlFor="page-vin">VIN Number *</Label>
-                        <Input
-                          id="page-vin"
-                          value={vinNumber}
-                          placeholder="17-digit VIN"
-                          className={cn(fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
-                          onChange={(e) => {
-                            setVinNumber(e.target.value.toUpperCase());
-                            clearError('vinNumber');
-                          }}
-                        />
-                        {fieldErrors.vinNumber && (
-                          <p className="mt-1 text-[11px] font-medium text-red-700">
-                            {fieldErrors.vinNumber}
-                          </p>
-                        )}
-                      </div>
-                      {mode === 'service' && (
-                        <div>
-                          <Label htmlFor="page-mileage">Current Mileage (km) *</Label>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                        <div className="sm:col-span-5">
+                          <Label htmlFor="page-vin">
+                            VIN Number {mode === 'service' ? '*' : '(Recommended)'}
+                          </Label>
                           <Input
-                            id="page-mileage"
-                            type="number"
-                            min={1}
-                            value={mileageKm}
-                            placeholder="e.g. 45000"
-                            className={cn(fieldErrors.mileageKm && ERROR_INPUT_CLASS)}
+                            id="page-vin"
+                            value={vinNumber}
+                            placeholder="17-digit VAG VIN"
+                            className={cn('bg-white font-mono', fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
                             onChange={(e) => {
-                              setMileageKm(e.target.value);
-                              clearError('mileageKm');
+                              setVinNumber(e.target.value.toUpperCase());
+                              clearError('vinNumber');
+                              if (mode === 'parts') {
+                                clearError('vehicleYear');
+                                clearError('vehicleModel');
+                              }
                             }}
                           />
-                          {fieldErrors.mileageKm && (
+                          {fieldErrors.vinNumber && (
                             <p className="mt-1 text-[11px] font-medium text-red-700">
-                              {fieldErrors.mileageKm}
+                              {fieldErrors.vinNumber}
                             </p>
                           )}
                         </div>
-                      )}
+                        <div className="sm:col-span-2">
+                          <Label htmlFor="page-year">
+                            Year {mode === 'parts' && vinNumber.trim().length < 6 ? '*' : ''}
+                          </Label>
+                          <Input
+                            id="page-year"
+                            maxLength={4}
+                            value={vehicleYear}
+                            placeholder="2020"
+                            className={cn('bg-white font-mono', fieldErrors.vehicleYear && ERROR_INPUT_CLASS)}
+                            onChange={(e) => {
+                              setVehicleYear(e.target.value.replace(/[^\d]/g, '').slice(0, 4));
+                              clearError('vehicleYear');
+                              if (mode === 'parts') clearError('vinNumber');
+                            }}
+                          />
+                          {fieldErrors.vehicleYear && (
+                            <p className="mt-1 text-[11px] font-medium text-red-700">
+                              {fieldErrors.vehicleYear}
+                            </p>
+                          )}
+                        </div>
+                        <div className="sm:col-span-5">
+                          <Label htmlFor="page-vag-model">
+                            Make &amp; Model {mode === 'parts' && vinNumber.trim().length < 6 ? '*' : ''}
+                          </Label>
+                          <Input
+                            id="page-vag-model"
+                            value={vehicleModel}
+                            placeholder="e.g. VW Polo / Audi Q5 / Porsche"
+                            className={cn('bg-white', fieldErrors.vehicleModel && ERROR_INPUT_CLASS)}
+                            onChange={(e) => {
+                              setVehicleModel(e.target.value);
+                              clearError('vehicleModel');
+                              if (mode === 'parts') clearError('vinNumber');
+                            }}
+                          />
+                          {fieldErrors.vehicleModel && (
+                            <p className="mt-1 text-[11px] font-medium text-red-700">
+                              {fieldErrors.vehicleModel}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div
+                        className={cn(
+                          'grid grid-cols-1 gap-4',
+                          mode === 'service' ? 'sm:grid-cols-2' : 'sm:grid-cols-1'
+                        )}
+                      >
+                        <div>
+                          <Label htmlFor="page-reg">
+                            Vehicle Registration {mode === 'service' ? '*' : '(Optional)'}
+                          </Label>
+                          <Input
+                            id="page-reg"
+                            value={vehicleReg}
+                            placeholder="e.g. NN 45210"
+                            className={cn(fieldErrors.vehicleReg && ERROR_INPUT_CLASS)}
+                            onChange={(e) => {
+                              setVehicleReg(e.target.value);
+                              clearError('vehicleReg');
+                            }}
+                          />
+                          {fieldErrors.vehicleReg && (
+                            <p className="mt-1 text-[11px] font-medium text-red-700">
+                              {fieldErrors.vehicleReg}
+                            </p>
+                          )}
+                        </div>
+                        {mode === 'service' && (
+                          <div>
+                            <Label htmlFor="page-mileage">Current Mileage (km) *</Label>
+                            <Input
+                              id="page-mileage"
+                              type="number"
+                              min={1}
+                              value={mileageKm}
+                              placeholder="e.g. 45000"
+                              className={cn(fieldErrors.mileageKm && ERROR_INPUT_CLASS)}
+                              onChange={(e) => {
+                                setMileageKm(e.target.value);
+                                clearError('mileageKm');
+                              }}
+                            />
+                            {fieldErrors.mileageKm && (
+                              <p className="mt-1 text-[11px] font-medium text-red-700">
+                                {fieldErrors.mileageKm}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
 

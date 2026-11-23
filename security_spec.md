@@ -2,10 +2,10 @@
 
 ## 1. Data Invariants
 1. **Default Deny**: Any unmatched collection or document is denied read/write access.
-2. **Dealership Branch Integrity**: Only branch document IDs `'1'` (Newcastle VW), `'2'` (Ermelo VW), and `'3'` (Vryheid VW) may exist in `/dealerships/{branchId}`, writable solely by verified Admins.
-3. **Master Group Stock Integrity**: Public readers may only read/list `/vehicles` where `status == 'available'` (preserving reserved/sold isolation from public scraping). Admins may create, update, or delete any vehicle with bounded `images` list (`1 <= size <= 10`) and valid `homeDealershipId in ['1', '2', '3']`.
+2. **Dealership Branch Integrity**: Only branch document IDs `'1'` (Newcastle VW), `'2'` (Ermelo VW), and `'3'` (Vryheid VW) may exist in `/dealerships/{branchId}`, writable solely by verified Admins. Optional `autotraderUrl` must be empty or match `^https://(www\.)?autotrader\.co\.za/dealer/.*$`.
+3. **Master Group Stock Integrity**: Public readers may only read/list `/vehicles` where `status == 'available'` (preserving reserved/sold isolation from public scraping). Admins may create, update, or delete any vehicle with bounded `images` list (`1 <= size <= 10`), valid `homeDealershipId in ['1', '2', '3']`, and optional bounded AutoTrader sync metadata (`source in ['autotrader', 'manual']`, `externalListingId`, `dealerId`, `variant`, `priceFormatted`, `canonicalUrl`, `lastSyncedAt`).
 4. **Scoped Promotions Consistency**: `/promotions` enforces `scope == 'MASTER' => dealershipId == null` and `scope == 'BRANCH' => dealershipId in ['1', '2', '3']`. Public list queries require `active == true` (admin queries full collection).
-5. **PII Isolation & Branch Attribution on Leads**: `/leads/{leadId}` allows public creation ONLY with `status == 'new'`, `createdAt == request.time`, valid `submittedAtDealershipId in ['1', '2', '3']`, and valid `homeDealershipId` (`null` or `'1'|'2'|'3'`). Public visitors can never `get`, `list`, `update`, or `delete` `/leads`.
+5. **PII Isolation & Branch Attribution on Leads**: `/leads/{leadId}` allows public creation ONLY with `status == 'new'`, `createdAt == request.time`, `details.size() <= 6000` (accommodating structured 4-step FSP/NCA finance applications without raw binary attachments), valid `submittedAtDealershipId in ['1', '2', '3']`, and valid `homeDealershipId` (`null` or `'1'|'2'|'3'`). Public visitors can never `get`, `list`, `update`, or `delete` `/leads`.
 6. **Verified Admin Gate**: Admin privileges require `request.auth != null && ((request.auth.token.email_verified == true && request.auth.token.email == 'smokeydhlamini@gmail.com') || exists(/databases/$(database)/documents/admins/$(request.auth.uid)))`.
 
 ## 2. The "Dirty Dozen" Adversarial Payloads

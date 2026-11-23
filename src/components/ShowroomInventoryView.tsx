@@ -22,6 +22,7 @@ import {
 } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
 import { SectionHeader } from './MotionPrimitives';
+import { VehicleImageSlider } from './VehicleImageSlider';
 import { Button, Select } from './ui/shadcn';
 
 interface ShowroomInventoryViewProps {
@@ -56,8 +57,8 @@ export function ShowroomInventoryView({
   const [condition, setCondition] = useState<StockCondition>('All');
   const [category, setCategory] = useState<VehicleCategory>('All');
   const [branchFilter, setBranchFilter] = useState<'All' | DealershipId>('All');
-  const [maxPrice, setMaxPrice] = useState<number>(1200000);
-  const [maxMonthly, setMaxMonthly] = useState<number>(20000);
+  const [maxPrice, setMaxPrice] = useState<number>(2500000);
+  const [maxMonthly, setMaxMonthly] = useState<number>(35000);
 
   const filteredVehicles = useMemo(() => {
     return activeVehicles.filter((item) => {
@@ -82,8 +83,8 @@ export function ShowroomInventoryView({
     setCondition('All');
     setCategory('All');
     setBranchFilter('All');
-    setMaxPrice(1200000);
-    setMaxMonthly(20000);
+    setMaxPrice(2500000);
+    setMaxMonthly(35000);
   };
 
   if (mode === 'specials') {
@@ -431,8 +432,8 @@ export function ShowroomInventoryView({
               </label>
               <input
                 type="range"
-                min={250000}
-                max={1200000}
+                min={150000}
+                max={2500000}
                 step={25000}
                 value={maxPrice}
                 onChange={(e) => setMaxPrice(Number(e.target.value))}
@@ -447,7 +448,7 @@ export function ShowroomInventoryView({
               <input
                 type="range"
                 min={3000}
-                max={20000}
+                max={35000}
                 step={500}
                 value={maxMonthly}
                 onChange={(e) => setMaxMonthly(Number(e.target.value))}
@@ -470,11 +471,20 @@ export function ShowroomInventoryView({
         ) : filteredVehicles.length === 0 ? (
           <div className="mt-10 rounded-xl border border-[#E2E8F0] bg-white p-12 text-center">
             <p className="text-base font-medium text-[#091224]">
-              No vehicles match your current filter criteria.
+              {activeVehicles.length === 0
+                ? 'No vehicles are currently listed in Group Showroom.'
+                : 'No vehicles match your current filter criteria.'}
             </p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={resetFilters}>
-              Reset Showroom Filters
-            </Button>
+            <p className="mt-1.5 text-sm text-[#64748B]">
+              {activeVehicles.length === 0
+                ? 'Sync AutoTrader stock or add vehicles manually in the Admin portal to display showroom listings here.'
+                : 'Adjust or reset your filters to view available group vehicles.'}
+            </p>
+            {activeVehicles.length > 0 && (
+              <Button variant="outline" size="sm" className="mt-4" onClick={resetFilters}>
+                Reset Showroom Filters
+              </Button>
+            )}
           </div>
         ) : (
           <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -494,19 +504,16 @@ export function ShowroomInventoryView({
                   transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                   className="group flex h-full flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white transition-shadow duration-200 hover:shadow-lg"
                 >
-                  <div className="relative aspect-4/3 w-full overflow-hidden border-b border-[#E2E8F0] bg-[#F1F5F9]">
-                    <img
-                      src={item.images[0]}
-                      alt={item.title}
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
-                    />
-                    <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs">
-                      <MapPin className="h-3 w-3 text-[#00437A]" />
-                      <span>Location: {homeBranch.shortName}</span>
-                    </div>
-                  </div>
+                  <VehicleImageSlider
+                    images={item.images}
+                    alt={item.title}
+                    badge={
+                      <div className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs backdrop-blur-xs">
+                        <MapPin className="h-3 w-3 text-[#00437A]" />
+                        <span>Location: {homeBranch.shortName}</span>
+                      </div>
+                    }
+                  />
 
                   <div className="flex flex-1 flex-col justify-between p-6">
                     <div>
@@ -526,7 +533,8 @@ export function ShowroomInventoryView({
                         {item.title}
                       </h3>
                       <p className="mt-1 text-xs text-[#64748B]">
-                        {item.model} · {item.fuelType} · {item.colour}
+                        {item.model}
+                        {item.colour ? ` · ${item.colour}` : ''}
                       </p>
 
                       {relatedSpecial && (
@@ -535,19 +543,17 @@ export function ShowroomInventoryView({
                         </p>
                       )}
 
-                      <dl className="mt-4 grid grid-cols-3 gap-2 border-y border-[#E2E8F0] py-2.5 text-[11px]">
-                        <div>
-                          <dt className="text-[#64748B]">Output</dt>
-                          <dd className="font-mono font-medium text-[#091224]">{item.powerKw}</dd>
-                        </div>
+                      <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-[#E2E8F0] py-2.5 text-xs">
                         <div>
                           <dt className="text-[#64748B]">Gearbox</dt>
-                          <dd className="font-medium text-[#091224] truncate">{item.transmission}</dd>
+                          <dd className="mt-0.5 font-medium text-[#091224] truncate">
+                            {item.transmission}
+                          </dd>
                         </div>
                         <div>
-                          <dt className="text-[#64748B]">Economy</dt>
-                          <dd className="font-mono font-medium text-[#091224]">
-                            {item.fuelEconomy}
+                          <dt className="text-[#64748B]">Fuel</dt>
+                          <dd className="mt-0.5 font-medium text-[#091224] truncate">
+                            {item.fuelType}
                           </dd>
                         </div>
                       </dl>

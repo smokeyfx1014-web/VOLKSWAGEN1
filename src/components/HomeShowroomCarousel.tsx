@@ -6,6 +6,7 @@ import { useDealershipData } from '../context/DealershipDataContext';
 import { formatZAR } from '../lib/utils';
 import { AppRoute, CmsVehicle } from '../types/dealership';
 import { FadeUp, SectionHeader } from './MotionPrimitives';
+import { VehicleImageSlider } from './VehicleImageSlider';
 import { Button } from './ui/shadcn';
 
 interface HomeShowroomCarouselProps {
@@ -156,16 +157,25 @@ export function HomeShowroomCarousel({
           ) : filteredVehicles.length === 0 ? (
             <div className="rounded-xl border border-[#E2E8F0] bg-white p-12 text-center">
               <p className="text-base font-medium text-[#091224]">
-                No vehicles listed in this category yet.
+                {activeVehicles.length === 0
+                  ? 'No vehicles are currently listed in Group Showroom.'
+                  : 'No vehicles listed in this category yet.'}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-4"
-                onClick={() => setFilter('all')}
-              >
-                Show All Group Stock
-              </Button>
+              <p className="mt-1.5 text-sm text-[#64748B]">
+                {activeVehicles.length === 0
+                  ? 'Live AutoTrader stock and new dealership entries will appear here automatically once synced.'
+                  : 'Try switching categories or view the complete dealership stock.'}
+              </p>
+              {filter !== 'all' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => setFilter('all')}
+                >
+                  Show All Group Stock
+                </Button>
+              )}
             </div>
           ) : (
             <AnimatePresence mode="wait" initial={false}>
@@ -192,25 +202,25 @@ export function HomeShowroomCarousel({
                       id={idx === 0 ? 'featured-showroom-heading' : undefined}
                       className="group flex h-full flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white transition-shadow duration-200 hover:shadow-lg"
                     >
-                      <div className="relative aspect-4/3 w-full overflow-hidden border-b border-[#E2E8F0] bg-[#F1F5F9]">
-                        <img
-                          src={vehicle.images[0]}
-                          alt={`${vehicle.title} — ${vehicle.model}`}
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                          className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
-                        />
-                        <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs backdrop-blur-xs">
-                          <MapPin className="h-3 w-3 text-[#00437A]" />
-                          <span>Held at {homeBranch.shortName}</span>
-                        </div>
-                      </div>
+                      <VehicleImageSlider
+                        images={vehicle.images}
+                        alt={`${vehicle.title} — ${vehicle.model}`}
+                        badge={
+                          <div className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs backdrop-blur-xs">
+                            <MapPin className="h-3 w-3 text-[#00437A]" />
+                            <span>Held at {homeBranch.shortName}</span>
+                          </div>
+                        }
+                      />
 
                       <div className="flex flex-1 flex-col justify-between p-6">
                         <div>
                           <div className="flex items-center justify-between gap-2 text-xs text-[#475569]">
                             <span>
-                              {vehicle.category} · {vehicle.bodyStyle}
+                              {vehicle.category} · {vehicle.year} ·{' '}
+                              {vehicle.mileage === 0
+                                ? '0 km'
+                                : `${vehicle.mileage.toLocaleString('en-ZA')} km`}
                             </span>
                             {matchingSpecial ? (
                               <span className="inline-flex items-center gap-1 font-semibold text-[#00437A]">
@@ -226,7 +236,8 @@ export function HomeShowroomCarousel({
                             {vehicle.title}
                           </h3>
                           <p className="mt-0.5 text-xs text-[#64748B]">
-                            {vehicle.model} · {vehicle.fuelType}
+                            {vehicle.model}
+                            {vehicle.colour ? ` · ${vehicle.colour}` : ''}
                           </p>
 
                           {matchingSpecial && (
@@ -235,27 +246,17 @@ export function HomeShowroomCarousel({
                             </p>
                           )}
 
-                          <dl className="mt-4 grid grid-cols-3 gap-3 border-y border-[#E2E8F0] py-3 text-xs">
+                          <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-[#E2E8F0] py-3 text-xs">
                             <div>
-                              <dt className="text-[#64748B]">Year</dt>
-                              <dd className="mt-0.5 font-mono font-medium text-[#091224] tabular-nums">
-                                {vehicle.year}
+                              <dt className="text-[#64748B]">Gearbox</dt>
+                              <dd className="mt-0.5 font-medium text-[#091224] truncate">
+                                {vehicle.transmission}
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-[#64748B]">
-                                {vehicle.category === 'New' ? 'Gearbox' : 'Mileage'}
-                              </dt>
-                              <dd className="mt-0.5 font-mono font-medium text-[#091224] truncate tabular-nums">
-                                {vehicle.category === 'New'
-                                  ? vehicle.transmission
-                                  : `${vehicle.mileage.toLocaleString('en-ZA')} km`}
-                              </dd>
-                            </div>
-                            <div>
-                              <dt className="text-[#64748B]">Output</dt>
-                              <dd className="mt-0.5 font-mono font-medium text-[#091224] tabular-nums">
-                                {vehicle.powerKw}
+                              <dt className="text-[#64748B]">Fuel</dt>
+                              <dd className="mt-0.5 font-medium text-[#091224] truncate">
+                                {vehicle.fuelType}
                               </dd>
                             </div>
                           </dl>

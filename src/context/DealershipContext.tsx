@@ -17,6 +17,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { DEFAULT_DEALERSHIPS } from '../data/dealership';
+import { validateAutoTraderDealerUrl } from '../lib/autotraderParser';
 import { OperationType, auth, db, handleFirestoreError } from '../lib/firebase';
 import { DealershipId, DealershipRecord } from '../types/dealership';
 
@@ -127,9 +128,9 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
 
   const dealershipsById: Record<DealershipId, DealershipRecord> = useMemo(
     () => ({
-      '1': dbDealerships['1'] ?? DEFAULT_DEALERSHIPS['1'],
-      '2': dbDealerships['2'] ?? DEFAULT_DEALERSHIPS['2'],
-      '3': dbDealerships['3'] ?? DEFAULT_DEALERSHIPS['3'],
+      '1': { ...DEFAULT_DEALERSHIPS['1'], ...dbDealerships['1'] },
+      '2': { ...DEFAULT_DEALERSHIPS['2'], ...dbDealerships['2'] },
+      '3': { ...DEFAULT_DEALERSHIPS['3'], ...dbDealerships['3'] },
     }),
     [dbDealerships]
   );
@@ -169,6 +170,10 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
   const saveDealershipSettings = useCallback(async (record: DealershipRecord) => {
     const uid = auth.currentUser?.uid;
     if (!uid) throw new Error('Authenticated admin session required.');
+    const validatedAutoTraderUrl = validateAutoTraderDealerUrl(record.autotraderUrl || '').slice(
+      0,
+      300
+    );
     const payload: DealershipRecord = {
       id: record.id,
       name: record.name.trim().slice(0, 120),
@@ -189,6 +194,9 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
       vwFinancialServices: record.vwFinancialServices.trim().slice(0, 40),
       volkswagensure: record.volkswagensure.trim().slice(0, 40),
       mapEmbedUrl: record.mapEmbedUrl.trim().slice(0, 600),
+      autotraderDealerId: (record.autotraderDealerId || '').trim().slice(0, 30),
+      autotraderUrl: validatedAutoTraderUrl,
+      syncEnabled: Boolean(record.syncEnabled && validatedAutoTraderUrl),
       updatedAt: serverTimestamp(),
       updatedBy: uid,
     };

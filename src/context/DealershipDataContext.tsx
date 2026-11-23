@@ -30,7 +30,13 @@ import {
   INITIAL_CMS_NEWS,
   INITIAL_CMS_PROMOTIONS,
   INITIAL_CMS_VEHICLES,
+  LEGACY_SEED_VEHICLE_IDS,
 } from '../data/dealership';
+import {
+  ParsedAutoTraderVehicle,
+  formatZarPrice,
+  normalizeAutoTraderJsonInput,
+} from '../lib/autotraderParser';
 import {
   OperationType,
   auth,
@@ -39,6 +45,8 @@ import {
   handleFirestoreError,
 } from '../lib/firebase';
 import {
+  AutoTraderBranchSyncSummary,
+  AutoTraderSyncReport,
   CmsLeadSubmission,
   CmsNewsArticle,
   CmsPromotion,
@@ -102,6 +110,13 @@ interface DealershipDataContextValue {
   seedAllDefaultData: () => Promise<void>;
   saveVehicle: (vehicle: Omit<CmsVehicle, 'createdAt' | 'updatedAt' | 'updatedBy'> & { createdAt?: unknown }) => Promise<void>;
   deleteVehicle: (id: string) => Promise<void>;
+  clearManualVehicles: () => Promise<number>;
+  syncAutoTraderFromDecodo: () => Promise<AutoTraderSyncReport>;
+  importAutoTraderJson: (
+    rawInput: string,
+    targetBranchId: DealershipId,
+    reconcileMissing: boolean
+  ) => Promise<AutoTraderSyncReport>;
   savePromotion: (promo: Omit<CmsPromotion, 'updatedAt' | 'updatedBy'>) => Promise<void>;
   archivePromotion: (id: string) => Promise<void>;
   reactivatePromotion: (id: string, newValidUntil: string) => Promise<void>;
@@ -127,7 +142,8 @@ interface DealershipDataContextValue {
 const DealershipDataContext = createContext<DealershipDataContextValue | null>(null);
 
 export function DealershipDataProvider({ children }: { children: React.ReactNode }) {
-  const { activeDealershipId, seedDefaultDealerships } = useDealership();
+  const { activeDealershipId, allDealerships, dealershipsById, seedDefaultDealerships } =
+    useDealership();
 
   const [todayISO, setTodayISO] = useState<string>(() => getTodayISO());
   const [user, setUser] = useState<User | null>(null);
@@ -142,6 +158,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
 
   const autoArchivedIdsRef = useRef<Set<string>>(new Set());
   const autoSeededRef = useRef(false);
+  const legacyCleanedRef = useRef(false);
 
   // Refresh todayISO every 30s for instant midnight expiry
   useEffect(() => {
@@ -293,21 +310,37 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     await seedCatalogToFirestore();
   }, [seedDefaultDealerships, seedCatalogToFirestore]);
 
-  // Auto-seed once when an admin logs into an empty database
+  // Auto-seed branches, promotions, and news once when an admin logs into an empty catalog
   useEffect(() => {
     if (!isAdmin || !user || autoSeededRef.current) return;
     if (
-      dbVehicles !== null &&
       dbPromotions !== null &&
       dbNews !== null &&
-      dbVehicles.length === 0 &&
       dbPromotions.length === 0 &&
       dbNews.length === 0
     ) {
       autoSeededRef.current = true;
       void seedAllDefaultData();
     }
-  }, [isAdmin, user, dbVehicles, dbPromotions, dbNews, seedAllDefaultData]);
+  }, [isAdmin, user, dbPromotions, dbNews, seedAllDefaultData]);
+
+  // Auto-remove legacy pre-seeded sample cars from Firestore once when admin signs in
+  useEffect(() => {
+    if (!isAdmin || !user || !dbVehicles || legacyCleanedRef.current) return;
+    const legacyDocs = dbVehicles.filter((v) => LEGACY_SEED_VEHICLE_IDS.has(v.id));
+    if (legacyDocs.length === 0) {
+      legacyCleanedRef.current = true;
+      return;
+    }
+    legacyCleanedRef.current = true;
+    const batch = writeBatch(db);
+    for (const item of legacyDocs) {
+      batch.delete(doc(db, 'vehicles', item.id));
+    }
+    void batch.commit().catch((err) =>
+      handleFirestoreError(err, OperationType.DELETE, 'vehicles/legacy-seed-cleanup')
+    );
+  }, [isAdmin, user, dbVehicles]);
 
   // Auto-archive expired promotions when admin views catalog
   useEffect(() => {
@@ -330,19 +363,21 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
 
   const usingFallbackSeed = Boolean(
     !loadingCatalog &&
-      dbVehicles?.length === 0 &&
       dbPromotions?.length === 0 &&
       dbNews?.length === 0
   );
 
-  // Use Firestore records if present, otherwise instant local fallback so all 3 branches render immediately
+  // Use live Firestore vehicles (excluding legacy pre-seeded sample cars)
   const allVehicles: CmsVehicle[] = useMemo(() => {
-    const raw = dbVehicles && dbVehicles.length > 0 ? dbVehicles : INITIAL_CMS_VEHICLES;
+    const raw = (dbVehicles && dbVehicles.length > 0 ? dbVehicles : INITIAL_CMS_VEHICLES).filter(
+      (v) => !LEGACY_SEED_VEHICLE_IDS.has(v.id)
+    );
     return raw.map((v) => ({
       ...v,
       images: Array.isArray(v.images) && v.images.length > 0 ? v.images : ['/assets/aistudio/starting-4_ece31872.jpg'],
       homeDealershipId: v.homeDealershipId ?? '1',
       status: v.status ?? 'available',
+      source: v.source ?? (v.id.startsWith('at_') ? 'autotrader' : 'manual'),
     }));
   }, [dbVehicles]);
 
@@ -434,7 +469,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         throw new Error('At least one valid vehicle image URL is required.');
       }
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         id,
         title: vehicle.title.trim().slice(0, 140),
         make: (vehicle.make || 'Volkswagen').trim().slice(0, 60),
@@ -447,16 +482,40 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         fuelType: vehicle.fuelType.trim().slice(0, 40) || 'Petrol',
         category: vehicle.category,
         bodyStyle: vehicle.bodyStyle,
-        powerKw: vehicle.powerKw.trim().slice(0, 40) || '85 kW',
-        fuelEconomy: vehicle.fuelEconomy.trim().slice(0, 40) || '5.6 L/100km',
+        powerKw: (vehicle.powerKw || '').trim().slice(0, 40) || 'N/A',
+        fuelEconomy: (vehicle.fuelEconomy || '').trim().slice(0, 40) || 'VW Spec',
         colour: vehicle.colour.trim().slice(0, 60) || 'Pure White',
         images: cleanedImages,
         homeDealershipId: vehicle.homeDealershipId,
         status: vehicle.status,
+        source: vehicle.source === 'autotrader' ? 'autotrader' : 'manual',
         createdAt: vehicle.createdAt ?? serverTimestamp(),
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
       };
+      if (vehicle.variant) {
+        payload.variant = vehicle.variant.trim().slice(0, 140);
+      }
+      if (vehicle.priceFormatted || payload.price) {
+        payload.priceFormatted = (
+          vehicle.priceFormatted || formatZarPrice(Number(payload.price))
+        )
+          .trim()
+          .slice(0, 40);
+      }
+      if (vehicle.externalListingId) {
+        payload.externalListingId = vehicle.externalListingId.trim().slice(0, 60);
+      }
+      if (vehicle.dealerId) {
+        payload.dealerId = vehicle.dealerId.trim().slice(0, 30);
+      }
+      if (vehicle.canonicalUrl) {
+        payload.canonicalUrl = vehicle.canonicalUrl.trim().slice(0, 400);
+      }
+      if (vehicle.lastSyncedAt) {
+        payload.lastSyncedAt = vehicle.lastSyncedAt;
+      }
+
       try {
         await setDoc(doc(db, 'vehicles', id), payload);
       } catch (err) {
@@ -476,6 +535,299 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       }
     },
     [user, isAdmin]
+  );
+
+  const clearManualVehicles = useCallback(async (): Promise<number> => {
+    if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+    const manualDocs = (dbVehicles ?? []).filter(
+      (v) => v.source !== 'autotrader' && !v.id.startsWith('at_')
+    );
+    if (manualDocs.length === 0) return 0;
+
+    for (let i = 0; i < manualDocs.length; i += 400) {
+      const chunk = manualDocs.slice(i, i + 400);
+      const batch = writeBatch(db);
+      for (const item of chunk) {
+        batch.delete(doc(db, 'vehicles', item.id));
+      }
+      try {
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, 'vehicles/clear-manual');
+      }
+    }
+    return manualDocs.length;
+  }, [user, isAdmin, dbVehicles]);
+
+  const reconcileAutoTraderBranches = useCallback(
+    async (
+      branchPayloads: {
+        branchId: DealershipId;
+        branchName: string;
+        dealerId: string;
+        skipped: boolean;
+        skipReason?: string;
+        pagesScraped: number;
+        listings: ParsedAutoTraderVehicle[];
+        error?: string;
+      }[],
+      reconcileMissing: boolean,
+      mode: 'decodo' | 'json-import'
+    ): Promise<AutoTraderSyncReport> => {
+      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+
+      const existingMap = new Map<string, CmsVehicle>();
+      for (const existingVehicle of dbVehicles ?? []) {
+        existingMap.set(existingVehicle.id, existingVehicle);
+      }
+
+      const pendingWrites: { id: string; data: Record<string, unknown> }[] = [];
+      const summaries: AutoTraderBranchSyncSummary[] = [];
+
+      for (const branchResult of branchPayloads) {
+        if (branchResult.skipped || branchResult.error) {
+          summaries.push({
+            branchId: branchResult.branchId,
+            branchName: branchResult.branchName,
+            dealerId: branchResult.dealerId,
+            skipped: branchResult.skipped,
+            skipReason: branchResult.skipReason,
+            pagesScraped: branchResult.pagesScraped,
+            scrapedCount: branchResult.listings.length,
+            addedCount: 0,
+            updatedCount: 0,
+            markedSoldCount: 0,
+            error: branchResult.error,
+          });
+          continue;
+        }
+
+        const activeListingIds = new Set<string>();
+        let addedCount = 0;
+        let updatedCount = 0;
+        let markedSoldCount = 0;
+
+        for (const item of branchResult.listings) {
+          activeListingIds.add(item.id);
+          const existingDoc = existingMap.get(item.id);
+          if (existingDoc) {
+            updatedCount += 1;
+          } else {
+            addedCount += 1;
+          }
+
+          pendingWrites.push({
+            id: item.id,
+            data: {
+              id: item.id,
+              title: item.title,
+              make: item.make,
+              model: item.model,
+              variant: item.variant,
+              year: item.year,
+              price: item.price,
+              priceFormatted: item.priceFormatted,
+              monthlyFrom: item.monthlyFrom,
+              mileage: item.mileage,
+              transmission: item.transmission,
+              fuelType: item.fuelType,
+              category: item.category,
+              bodyStyle: item.bodyStyle,
+              powerKw: item.powerKw,
+              fuelEconomy: item.fuelEconomy,
+              colour: item.colour,
+              images: item.images,
+              homeDealershipId: item.homeDealershipId,
+              status: 'available',
+              source: 'autotrader',
+              externalListingId: item.externalListingId,
+              dealerId: item.dealerId,
+              canonicalUrl: item.canonicalUrl,
+              lastSyncedAt: serverTimestamp(),
+              createdAt: existingDoc?.createdAt ?? serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              updatedBy: user.uid,
+            },
+          });
+        }
+
+        // Mark missing AutoTrader listings for this branch as sold; never touch manual stock
+        if (reconcileMissing && branchResult.listings.length > 0) {
+          for (const existingDoc of existingMap.values()) {
+            const isSameBranchAutoTrader =
+              existingDoc.homeDealershipId === branchResult.branchId &&
+              (existingDoc.source === 'autotrader' || existingDoc.id.startsWith('at_'));
+            if (
+              isSameBranchAutoTrader &&
+              existingDoc.status !== 'sold' &&
+              !activeListingIds.has(existingDoc.id)
+            ) {
+              markedSoldCount += 1;
+              pendingWrites.push({
+                id: existingDoc.id,
+                data: {
+                  id: existingDoc.id,
+                  title: existingDoc.title,
+                  make: existingDoc.make,
+                  model: existingDoc.model,
+                  year: existingDoc.year,
+                  price: existingDoc.price,
+                  monthlyFrom: existingDoc.monthlyFrom,
+                  mileage: existingDoc.mileage,
+                  transmission: existingDoc.transmission,
+                  fuelType: existingDoc.fuelType,
+                  category: existingDoc.category,
+                  bodyStyle: existingDoc.bodyStyle,
+                  powerKw: existingDoc.powerKw,
+                  fuelEconomy: existingDoc.fuelEconomy,
+                  colour: existingDoc.colour,
+                  images: existingDoc.images,
+                  homeDealershipId: existingDoc.homeDealershipId,
+                  status: 'sold',
+                  source: 'autotrader',
+                  ...(existingDoc.externalListingId
+                    ? { externalListingId: existingDoc.externalListingId }
+                    : {}),
+                  ...(existingDoc.dealerId ? { dealerId: existingDoc.dealerId } : {}),
+                  ...(existingDoc.variant ? { variant: existingDoc.variant } : {}),
+                  ...(existingDoc.priceFormatted
+                    ? { priceFormatted: existingDoc.priceFormatted }
+                    : {}),
+                  ...(existingDoc.canonicalUrl ? { canonicalUrl: existingDoc.canonicalUrl } : {}),
+                  lastSyncedAt: serverTimestamp(),
+                  createdAt: existingDoc.createdAt ?? serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                  updatedBy: user.uid,
+                },
+              });
+            }
+          }
+        }
+
+        summaries.push({
+          branchId: branchResult.branchId,
+          branchName: branchResult.branchName,
+          dealerId: branchResult.dealerId,
+          skipped: false,
+          pagesScraped: branchResult.pagesScraped,
+          scrapedCount: branchResult.listings.length,
+          addedCount,
+          updatedCount,
+          markedSoldCount,
+        });
+      }
+
+      // Commit in Firestore batches of <= 400 writes
+      for (let i = 0; i < pendingWrites.length; i += 400) {
+        const chunk = pendingWrites.slice(i, i + 400);
+        const batch = writeBatch(db);
+        for (const item of chunk) {
+          batch.set(doc(db, 'vehicles', item.id), item.data);
+        }
+        try {
+          await batch.commit();
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, 'vehicles/autotrader-sync');
+        }
+      }
+
+      return {
+        syncedAtIso: new Date().toISOString(),
+        mode,
+        branches: summaries,
+      };
+    },
+    [user, isAdmin, dbVehicles]
+  );
+
+  const syncAutoTraderFromDecodo = useCallback(async (): Promise<AutoTraderSyncReport> => {
+    if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+    const idToken = await user.getIdToken();
+
+    const response = await fetch('/api/autotrader-scrape', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        branches: allDealerships.map((b) => ({
+          id: b.id,
+          name: b.name,
+          autotraderDealerId: b.autotraderDealerId,
+          autotraderUrl: b.autotraderUrl,
+          syncEnabled: b.syncEnabled,
+        })),
+      }),
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error(
+        'Live Decodo scrape endpoint is unavailable on static hosting. Use "Paste AutoTrader JSON" to import and sync listings directly.'
+      );
+    }
+
+    const payload = (await response.json()) as {
+      error?: string;
+      branches?: {
+        branchId: DealershipId;
+        branchName: string;
+        dealerId: string;
+        skipped: boolean;
+        skipReason?: string;
+        pagesScraped: number;
+        listings: ParsedAutoTraderVehicle[];
+        error?: string;
+      }[];
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error || `Scrape failed with HTTP ${response.status}.`);
+    }
+
+    return reconcileAutoTraderBranches(payload.branches ?? [], true, 'decodo');
+  }, [user, isAdmin, allDealerships, reconcileAutoTraderBranches]);
+
+  const importAutoTraderJson = useCallback(
+    async (
+      rawInput: string,
+      targetBranchId: DealershipId,
+      reconcileMissing: boolean
+    ): Promise<AutoTraderSyncReport> => {
+      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      const targetBranch = dealershipsById[targetBranchId];
+      const { vehicles, errors } = normalizeAutoTraderJsonInput(
+        rawInput,
+        targetBranchId,
+        targetBranch.autotraderDealerId || ''
+      );
+      if (vehicles.length === 0) {
+        throw new Error(errors[0] || 'No valid AutoTrader vehicle listings found to import.');
+      }
+
+      const grouped = new Map<DealershipId, ParsedAutoTraderVehicle[]>();
+      for (const v of vehicles) {
+        const list = grouped.get(v.homeDealershipId) ?? [];
+        list.push(v);
+        grouped.set(v.homeDealershipId, list);
+      }
+
+      const payloads = Array.from(grouped.entries()).map(([branchId, listings]) => {
+        const b = dealershipsById[branchId];
+        return {
+          branchId,
+          branchName: b.name,
+          dealerId: b.autotraderDealerId || '',
+          skipped: false,
+          pagesScraped: 1,
+          listings,
+        };
+      });
+
+      return reconcileAutoTraderBranches(payloads, reconcileMissing, 'json-import');
+    },
+    [user, isAdmin, dealershipsById, reconcileAutoTraderBranches]
   );
 
   const savePromotion = useCallback(
@@ -657,7 +1009,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
           phone: payload.phone.trim().slice(0, 30),
           email: payload.email.trim().slice(0, 140),
           subject: payload.subject.trim().slice(0, 200),
-          details: payload.details.trim().slice(0, 1500),
+          details: payload.details.trim().slice(0, 6000),
           submittedAtDealershipId: activeDealershipId,
           homeDealershipId: payload.homeDealershipId ?? null,
           status: 'new',
@@ -695,6 +1047,9 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     seedAllDefaultData,
     saveVehicle,
     deleteVehicle,
+    clearManualVehicles,
+    syncAutoTraderFromDecodo,
+    importAutoTraderJson,
     savePromotion,
     archivePromotion,
     reactivatePromotion,

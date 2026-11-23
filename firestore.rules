@@ -49,7 +49,8 @@ service cloud.firestore {
           'receptionNumber', 'whatsappNumber', 'email', 'physicalAddress',
           'postalAddress', 'city', 'province', 'salesHours', 'serviceHours',
           'roadsideAssist', 'vwFinancialServices', 'volkswagensure',
-          'mapEmbedUrl', 'updatedAt', 'updatedBy'
+          'mapEmbedUrl', 'autotraderDealerId', 'autotraderUrl', 'syncEnabled',
+          'updatedAt', 'updatedBy'
         ])
         && isValidBranchId(data.id) && data.id == branchParam
         && data.name is string && data.name.size() >= 3 && data.name.size() <= 120
@@ -70,6 +71,9 @@ service cloud.firestore {
         && data.vwFinancialServices is string && data.vwFinancialServices.size() >= 5 && data.vwFinancialServices.size() <= 40
         && data.volkswagensure is string && data.volkswagensure.size() >= 5 && data.volkswagensure.size() <= 40
         && data.mapEmbedUrl is string && data.mapEmbedUrl.size() <= 600
+        && (!('autotraderDealerId' in data) || (data.autotraderDealerId is string && data.autotraderDealerId.size() <= 30))
+        && (!('autotraderUrl' in data) || (data.autotraderUrl is string && data.autotraderUrl.size() <= 300 && (data.autotraderUrl == '' || data.autotraderUrl.matches('^https://(www\\.)?autotrader\\.co\\.za/dealer/.*$'))))
+        && (!('syncEnabled' in data) || data.syncEnabled is bool)
         && data.updatedAt == request.time
         && data.updatedBy is string && data.updatedBy == request.auth.uid;
     }
@@ -85,7 +89,8 @@ service cloud.firestore {
           'id', 'title', 'make', 'model', 'year', 'price', 'monthlyFrom', 'mileage',
           'transmission', 'fuelType', 'category', 'bodyStyle', 'powerKw',
           'fuelEconomy', 'colour', 'images', 'homeDealershipId', 'status',
-          'createdAt', 'updatedAt', 'updatedBy'
+          'source', 'externalListingId', 'dealerId', 'variant', 'priceFormatted',
+          'canonicalUrl', 'lastSyncedAt', 'createdAt', 'updatedAt', 'updatedBy'
         ])
         && isValidId(data.id)
         && data.title is string && data.title.size() >= 2 && data.title.size() <= 140
@@ -106,6 +111,13 @@ service cloud.firestore {
         && data.images[0] is string && data.images[0].size() >= 5 && data.images[0].size() <= 500
         && isValidBranchId(data.homeDealershipId)
         && data.status in ['available', 'reserved', 'sold']
+        && (!('source' in data) || data.source in ['autotrader', 'manual'])
+        && (!('externalListingId' in data) || (data.externalListingId is string && data.externalListingId.size() <= 60))
+        && (!('dealerId' in data) || (data.dealerId is string && data.dealerId.size() <= 30))
+        && (!('variant' in data) || (data.variant is string && data.variant.size() <= 140))
+        && (!('priceFormatted' in data) || (data.priceFormatted is string && data.priceFormatted.size() <= 40))
+        && (!('canonicalUrl' in data) || (data.canonicalUrl is string && data.canonicalUrl.size() <= 400))
+        && (!('lastSyncedAt' in data) || data.lastSyncedAt == null || data.lastSyncedAt == request.time || data.lastSyncedAt is timestamp)
         && data.createdAt is timestamp
         && data.updatedAt == request.time
         && data.updatedBy is string && data.updatedBy == request.auth.uid;
@@ -181,7 +193,7 @@ service cloud.firestore {
         && data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 30
         && data.email is string && data.email.size() >= 5 && data.email.size() <= 140
         && data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 200
-        && data.details is string && data.details.size() <= 1500
+        && data.details is string && data.details.size() <= 6000
         && isValidBranchId(data.submittedAtDealershipId)
         && (data.homeDealershipId == null || isValidBranchId(data.homeDealershipId))
         && data.status in ['new', 'contacted', 'archived']

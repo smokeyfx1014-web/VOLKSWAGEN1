@@ -1,11 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Archive,
   Building2,
   Car,
   CheckCircle2,
+  Clock,
   Database,
   Edit3,
+  ExternalLink,
   Globe,
   Inbox,
   LayoutDashboard,
@@ -14,18 +17,21 @@ import {
   MapPin,
   Newspaper,
   Plus,
+  RefreshCw,
   RotateCcw,
   Save,
   Search,
   ShieldAlert,
   Sparkles,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { DEALERSHIP_IMAGE_LIBRARY, GROUP_CORPORATE_INFO } from '../data/dealership';
 import { cn, formatZAR, toGoogleMapsEmbedUrl } from '../lib/utils';
 import {
+  AutoTraderSyncReport,
   CmsLeadSubmission,
   CmsNewsArticle,
   CmsPromotion,
@@ -40,6 +46,35 @@ import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
 type AdminTab = 'overview' | 'vehicles' | 'promotions' | 'branches' | 'news' | 'leads';
 type VisibilityChoice = 'MASTER' | DealershipId;
+
+function formatSyncTimestamp(value: unknown): string {
+  if (!value) return '—';
+  try {
+    let date: Date | null = null;
+    if (value instanceof Date) {
+      date = value;
+    } else if (
+      typeof value === 'object' &&
+      value !== null &&
+      'toDate' in value &&
+      typeof (value as { toDate: () => Date }).toDate === 'function'
+    ) {
+      date = (value as { toDate: () => Date }).toDate();
+    } else if (typeof value === 'string' || typeof value === 'number') {
+      date = new Date(value);
+    }
+    if (!date || Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('en-ZA', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
 
 function addDaysISO(baseISO: string, days: number): string {
   const date = new Date(`${baseISO}T00:00:00`);
@@ -131,6 +166,9 @@ export function AdminPortalPage() {
     seedAllDefaultData,
     saveVehicle,
     deleteVehicle,
+    clearManualVehicles,
+    syncAutoTraderFromDecodo,
+    importAutoTraderJson,
     savePromotion,
     archivePromotion,
     reactivatePromotion,
@@ -151,6 +189,16 @@ export function AdminPortalPage() {
 
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState(false);
+
+  // AutoTrader Sync & JSON Import state
+  const [syncingAutoTrader, setSyncingAutoTrader] = useState(false);
+  const [syncReport, setSyncReport] = useState<AutoTraderSyncReport | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [showJsonImportModal, setShowJsonImportModal] = useState(false);
+  const [jsonImportRaw, setJsonImportRaw] = useState('');
+  const [jsonImportBranchId, setJsonImportBranchId] = useState<DealershipId>(activeDealership.id);
+  const [jsonImportReconcile, setJsonImportReconcile] = useState(false);
+  const [branchSaveError, setBranchSaveError] = useState<string | null>(null);
 
   // Modal editors
   const [editingVehicle, setEditingVehicle] = useState<
@@ -188,6 +236,12 @@ export function AdminPortalPage() {
         .filter((p) => p.active && p.validUntil >= todayISO)
         .sort((a, b) => a.validUntil.localeCompare(b.validUntil)),
     [allPromotions, todayISO]
+  );
+
+  const manualVehiclesCount = useMemo(
+    () =>
+      allVehicles.filter((v) => v.source !== 'autotrader' && !v.id.startsWith('at_')).length,
+    [allVehicles]
   );
 
   const filteredVehicles = useMemo(() => {
@@ -593,35 +647,164 @@ export function AdminPortalPage() {
                   ))}
                 </Select>
               </div>
-              <Button
-                onClick={() =>
-                  setEditingVehicle({
-                    id: `veh-${Date.now()}`,
-                    title: '',
-                    make: 'Volkswagen',
-                    model: '',
-                    year: 2026,
-                    price: 399900,
-                    monthlyFrom: 5990,
-                    mileage: 0,
-                    transmission: '7-Speed DSG',
-                    fuelType: 'Petrol',
-                    category: 'New',
-                    bodyStyle: 'SUVs',
-                    powerKw: '85 kW',
-                    fuelEconomy: '5.6 L/100km',
-                    colour: 'Pure White',
-                    images: ['/assets/aistudio/vwslider10_5974d4ed.jpg'],
-                    homeDealershipId: activeDealership.id,
-                    status: 'available',
-                    extraImagesText: '',
-                  })
-                }
-              >
-                <Plus className="h-4 w-4" />
-                <span>Add Vehicle to Group Stock</span>
-              </Button>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <Button
+                  variant="outline"
+                  disabled={syncingAutoTrader}
+                  onClick={async () => {
+                    setSyncingAutoTrader(true);
+                    setSyncError(null);
+                    try {
+                      const report = await syncAutoTraderFromDecodo();
+                      setSyncReport(report);
+                      showFlash('AutoTrader stock sync completed across configured branches.');
+                    } catch (err) {
+                      setSyncError(
+                        err instanceof Error
+                          ? err.message
+                          : 'Unable to sync AutoTrader listings right now.'
+                      );
+                    } finally {
+                      setSyncingAutoTrader(false);
+                    }
+                  }}
+                >
+                  <RefreshCw
+                    className={cn('h-4 w-4', syncingAutoTrader && 'animate-spin')}
+                  />
+                  <span>
+                    {syncingAutoTrader ? 'Syncing AutoTrader...' : 'Sync AutoTrader Stock Now'}
+                  </span>
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setJsonImportBranchId(
+                      vehicleBranchFilter === 'All' ? activeDealership.id : vehicleBranchFilter
+                    );
+                    setSyncError(null);
+                    setShowJsonImportModal(true);
+                  }}
+                >
+                  <Upload className="h-4 w-4" />
+                  <span>Paste AutoTrader JSON</span>
+                </Button>
+
+                {manualVehiclesCount > 0 && (
+                  <Button
+                    variant="outline"
+                    disabled={busyAction}
+                    onClick={async () => {
+                      setBusyAction(true);
+                      try {
+                        const removed = await clearManualVehicles();
+                        showFlash(
+                          `Removed ${removed} manually added ${removed === 1 ? 'vehicle' : 'vehicles'} from Master Group Stock.`
+                        );
+                      } finally {
+                        setBusyAction(false);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 text-red-600" />
+                    <span>Remove Manual Cars ({manualVehiclesCount})</span>
+                  </Button>
+                )}
+
+                <Button
+                  onClick={() =>
+                    setEditingVehicle({
+                      id: `veh-${Date.now()}`,
+                      title: '',
+                      make: 'Volkswagen',
+                      model: '',
+                      year: 2026,
+                      price: 399900,
+                      monthlyFrom: 5990,
+                      mileage: 0,
+                      transmission: '7-Speed DSG',
+                      fuelType: 'Petrol',
+                      category: 'New',
+                      bodyStyle: 'SUVs',
+                      powerKw: 'N/A',
+                      fuelEconomy: 'VW Spec',
+                      colour: 'Pure White',
+                      images: ['/assets/aistudio/vwslider10_5974d4ed.jpg'],
+                      homeDealershipId: activeDealership.id,
+                      status: 'available',
+                      source: 'manual',
+                      extraImagesText: '',
+                    })
+                  }
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Add Vehicle to Group Stock</span>
+                </Button>
+              </div>
             </div>
+
+            {syncError && (
+              <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 text-xs text-amber-950">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-semibold">AutoTrader Live Scrape Notice</p>
+                    <p>{syncError}</p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSyncError(null);
+                    setShowJsonImportModal(true);
+                  }}
+                >
+                  Open JSON Importer
+                </Button>
+              </div>
+            )}
+
+            {syncReport && (
+              <div className="rounded-xl border border-[#001E50]/20 bg-white p-5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#001E50]">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                    <span>
+                      AutoTrader Sync Summary (
+                      {syncReport.mode === 'decodo' ? 'Decodo Live Scrape' : 'JSON Import'})
+                    </span>
+                  </div>
+                  <span className="font-mono text-[11px] text-[#64748B]">
+                    {formatSyncTimestamp(syncReport.syncedAtIso)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {syncReport.branches.map((b) => (
+                    <div
+                      key={b.branchId}
+                      className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3 text-xs space-y-1"
+                    >
+                      <p className="font-semibold text-[#091224]">
+                        {b.branchName} {b.dealerId ? `(#${b.dealerId})` : ''}
+                      </p>
+                      {b.skipped ? (
+                        <p className="text-[#64748B]">{b.skipReason || 'Skipped'}</p>
+                      ) : b.error ? (
+                        <p className="text-red-700">{b.error}</p>
+                      ) : (
+                        <p className="font-mono text-[#334155]">
+                          +{b.addedCount} added · {b.updatedCount} updated · {b.markedSoldCount}{' '}
+                          marked sold
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="overflow-x-auto rounded-2xl border border-[#E2E8F0] bg-white">
               <table className="w-full text-left text-sm">
@@ -629,7 +812,7 @@ export function AdminPortalPage() {
                   <tr>
                     <th className="px-4 py-3">Vehicle</th>
                     <th className="px-4 py-3">Holding Branch</th>
-                    <th className="px-4 py-3">Category</th>
+                    <th className="px-4 py-3">Source &amp; Last Synced</th>
                     <th className="px-4 py-3">Price</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3 text-right">Actions</th>
@@ -638,6 +821,7 @@ export function AdminPortalPage() {
                 <tbody className="divide-y divide-[#E2E8F0]">
                   {filteredVehicles.map((v) => {
                     const homeBranch = dealershipsById[v.homeDealershipId];
+                    const isAutoTrader = v.source === 'autotrader' || v.id.startsWith('at_');
                     return (
                       <tr key={v.id} className="hover:bg-[#F8FAFC]">
                         <td className="px-4 py-3.5">
@@ -645,12 +829,14 @@ export function AdminPortalPage() {
                             <img
                               src={v.images[0]}
                               alt={v.title}
+                              referrerPolicy="no-referrer"
                               className="h-12 w-16 rounded-md object-cover border border-[#E2E8F0] shrink-0"
                             />
                             <div>
                               <p className="font-semibold text-[#091224]">{v.title}</p>
                               <p className="text-xs text-[#64748B]">
-                                {v.model} · {v.year} · {v.mileage.toLocaleString('en-ZA')} km
+                                {v.model} · {v.year} · {v.mileage.toLocaleString('en-ZA')} km ·{' '}
+                                {v.category}
                               </p>
                             </div>
                           </div>
@@ -661,8 +847,36 @@ export function AdminPortalPage() {
                             {homeBranch?.shortName} (ID {v.homeDealershipId})
                           </span>
                         </td>
-                        <td className="px-4 py-3.5 text-xs text-[#334155]">
-                          {v.category} · {v.bodyStyle}
+                        <td className="px-4 py-3.5 text-xs">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded px-2 py-0.5 text-[11px] font-semibold',
+                                  isAutoTrader
+                                    ? 'bg-blue-50 text-[#00437A]'
+                                    : 'bg-slate-100 text-[#334155]'
+                                )}
+                              >
+                                {isAutoTrader ? 'AutoTrader' : 'Manual Entry'}
+                              </span>
+                              {v.canonicalUrl && (
+                                <a
+                                  href={v.canonicalUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Open AutoTrader listing"
+                                  className="text-[#00437A] hover:text-[#001E50]"
+                                >
+                                  <ExternalLink className="h-3.5 w-3.5" />
+                                </a>
+                              )}
+                            </div>
+                            <p className="inline-flex items-center gap-1 font-mono text-[11px] text-[#64748B]">
+                              <Clock className="h-3 w-3" />
+                              {formatSyncTimestamp(v.lastSyncedAt ?? v.updatedAt)}
+                            </p>
+                          </div>
                         </td>
                         <td className="px-4 py-3.5 font-mono text-xs">
                           <p className="font-semibold text-[#091224]">{formatZAR(v.price)}</p>
@@ -963,9 +1177,14 @@ export function AdminPortalPage() {
               onSubmit={async (e) => {
                 e.preventDefault();
                 setBusyAction(true);
+                setBranchSaveError(null);
                 try {
                   await saveDealershipSettings(branchDraft);
                   showFlash(`Saved live Firestore settings for ${branchDraft.name} (ID ${branchDraft.id}).`);
+                } catch (err) {
+                  setBranchSaveError(
+                    err instanceof Error ? err.message : 'Unable to save branch settings.'
+                  );
                 } finally {
                   setBusyAction(false);
                 }
@@ -986,6 +1205,12 @@ export function AdminPortalPage() {
                   <span>Save Branch Settings</span>
                 </Button>
               </div>
+
+              {branchSaveError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800">
+                  {branchSaveError}
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
@@ -1145,6 +1370,57 @@ export function AdminPortalPage() {
                     }
                     required
                   />
+                </div>
+              </div>
+
+              {/* AutoTrader Dealer Integration Settings */}
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-display text-sm font-semibold text-[#091224]">
+                      AutoTrader Stock Sync Integration
+                    </h3>
+                    <p className="text-xs text-[#64748B]">
+                      Leave Dealer ID &amp; URL blank and disable sync if this branch is not listed on AutoTrader (manual vehicle entry remains active).
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 rounded-lg border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-medium text-[#091224] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(branchDraft.syncEnabled)}
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, syncEnabled: e.target.checked })
+                      }
+                    />
+                    <span>AutoTrader Sync Enabled</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <div>
+                    <Label>AutoTrader Dealer ID</Label>
+                    <Input
+                      value={branchDraft.autotraderDealerId ?? ''}
+                      placeholder="e.g. 168682 (blank if none)"
+                      onChange={(e) =>
+                        setBranchDraft({
+                          ...branchDraft,
+                          autotraderDealerId: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label>AutoTrader Dealer Showroom URL</Label>
+                    <Input
+                      type="url"
+                      value={branchDraft.autotraderUrl ?? ''}
+                      placeholder="https://www.autotrader.co.za/dealer/..."
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, autotraderUrl: e.target.value })
+                      }
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1348,7 +1624,7 @@ export function AdminPortalPage() {
                           <strong className="text-[#091224]">Email:</strong> {lead.email}
                         </p>
                       </div>
-                      <p className="rounded-lg bg-[#F8FAFC] p-3 font-mono text-xs text-[#475569]">
+                      <p className="rounded-lg bg-[#F8FAFC] p-3 font-mono text-xs text-[#475569] whitespace-pre-wrap leading-relaxed">
                         {lead.details}
                       </p>
                     </div>
@@ -1561,23 +1837,23 @@ export function AdminPortalPage() {
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
-                <Label>Power Output *</Label>
+                <Label>Power Output (Optional)</Label>
                 <Input
                   value={editingVehicle.powerKw}
+                  placeholder="Optional (e.g. 85 kW)"
                   onChange={(e) =>
                     setEditingVehicle({ ...editingVehicle, powerKw: e.target.value })
                   }
-                  required
                 />
               </div>
               <div>
-                <Label>Fuel Economy *</Label>
+                <Label>Fuel Economy (Optional)</Label>
                 <Input
                   value={editingVehicle.fuelEconomy}
+                  placeholder="Optional (e.g. 5.6 L/100km)"
                   onChange={(e) =>
                     setEditingVehicle({ ...editingVehicle, fuelEconomy: e.target.value })
                   }
-                  required
                 />
               </div>
               <div>
@@ -1948,6 +2224,123 @@ export function AdminPortalPage() {
                 Cancel
               </Button>
               <Button type="submit">Save Article</Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+
+      {/* PASTE AUTOTRADER JSON / DECODO EXPORT MODAL */}
+      {showJsonImportModal && (
+        <Dialog
+          open
+          onClose={() => setShowJsonImportModal(false)}
+          title="Paste AutoTrader JSON / Decodo Output"
+          subtitle="Import AutoTrader dealer listings directly into Master Group Stock using your authenticated Admin session."
+          maxWidthClass="max-w-2xl"
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusyAction(true);
+              setSyncError(null);
+              try {
+                const report = await importAutoTraderJson(
+                  jsonImportRaw,
+                  jsonImportBranchId,
+                  jsonImportReconcile
+                );
+                setSyncReport(report);
+                setShowJsonImportModal(false);
+                setJsonImportRaw('');
+                showFlash('Imported AutoTrader vehicle listings into Master Group Stock.');
+              } catch (err) {
+                setSyncError(
+                  err instanceof Error ? err.message : 'Unable to parse and import AutoTrader JSON.'
+                );
+              } finally {
+                setBusyAction(false);
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Default Target Holding Branch *</Label>
+                <Select
+                  value={jsonImportBranchId}
+                  onChange={(e) => setJsonImportBranchId(e.target.value as DealershipId)}
+                >
+                  {allDealerships.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} (ID {b.id})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex items-end pb-1">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setJsonImportRaw(
+                      JSON.stringify(
+                        [
+                          {
+                            listingId: '28194501',
+                            title: '2025 Volkswagen Polo 1.0 TSI Life DSG',
+                            year: 2025,
+                            price: 389900,
+                            mileage: 14200,
+                            transmission: 'Automatic',
+                            fuelType: 'Petrol',
+                            category: 'MasterCars',
+                            images: ['/assets/online/vw-polo-2024.jpg'],
+                            canonicalUrl:
+                              'https://www.autotrader.co.za/car-for-sale/volkswagen/polo/newcastle/28194501',
+                          },
+                        ],
+                        null,
+                        2
+                      )
+                    )
+                  }
+                  className="text-xs font-semibold text-[#00437A] hover:underline cursor-pointer"
+                >
+                  Insert Sample JSON Template
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <Label>AutoTrader JSON Array, Decodo Response JSON, or Dealer HTML *</Label>
+              <Textarea
+                rows={10}
+                value={jsonImportRaw}
+                onChange={(e) => setJsonImportRaw(e.target.value)}
+                placeholder='Paste JSON array ([{ "listingId": "...", "title": "...", "price": 399900, ... }]) or raw Decodo { "results": [{ "content": "<html>..." }] }'
+                className="font-mono text-xs"
+                required
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-xs text-[#334155] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={jsonImportReconcile}
+                onChange={(e) => setJsonImportReconcile(e.target.checked)}
+              />
+              <span>
+                Mark existing AutoTrader vehicles at this branch as Sold if omitted from this import (manual vehicles are never modified)
+              </span>
+            </label>
+
+            <div className="flex justify-end gap-3 border-t border-[#E2E8F0] pt-4">
+              <Button variant="ghost" onClick={() => setShowJsonImportModal(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busyAction}>
+                <Upload className="h-4 w-4" />
+                <span>{busyAction ? 'Importing...' : 'Import to Firestore'}</span>
+              </Button>
             </div>
           </form>
         </Dialog>

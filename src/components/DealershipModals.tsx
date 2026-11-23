@@ -22,6 +22,8 @@ type FieldErrorMap = Partial<
     | 'fullName'
     | 'phone'
     | 'email'
+    | 'vehicleYear'
+    | 'vehicleModel'
     | 'vehicleReg'
     | 'vinNumber'
     | 'mileageKm'
@@ -71,6 +73,8 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
   const [selectedModel, setSelectedModel] = useState(
     activeVehicles[0]?.title ?? '2026 Volkswagen Polo Vivo 1.4 Life'
   );
+  const [vehicleYear, setVehicleYear] = useState('');
+  const [vehicleModel, setVehicleModel] = useState('');
   const [serviceType, setServiceType] = useState('Minor Scheduled Service');
   const [preferredDate, setPreferredDate] = useState(getNextBusinessDayISO);
   const [preferredTime, setPreferredTime] = useState('09:00');
@@ -100,6 +104,8 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     setServiceType('Minor Scheduled Service');
     setPreferredDate(getNextBusinessDayISO());
     setPreferredTime('09:00');
+    setVehicleYear('');
+    setVehicleModel('');
     setVehicleReg('');
     setVinNumber('');
     setMileageKm('');
@@ -232,14 +238,14 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       ctaLabel: 'Submit Finance Request',
     },
     service: {
-      title: 'Book Approved Workshop Service',
-      subtitle: `${activeDealership.serviceHours}. Provide your vehicle & contact details for advisor confirmation.`,
+      title: 'Book Approved VAG Workshop Service',
+      subtitle: `${activeDealership.serviceHours}. Mandatory VIN required for VW, Audi, Porsche & VAG service verification.`,
       prefix: 'SRV',
       ctaLabel: 'Request Service Booking',
     },
     parts: {
-      title: 'Request Genuine Volkswagen Parts',
-      subtitle: `Provide your VIN, registration, and contact details so our ${activeDealership.shortName} Parts Executive can verify fitment.`,
+      title: 'Request Genuine VAG Group Parts',
+      subtitle: `We supply OEM parts for VW, Audi, Porsche & VAG models. Identify via VIN or Year & Model for our ${activeDealership.shortName} Parts Desk.`,
       prefix: 'PRT',
       ctaLabel: 'Submit Parts Request',
     },
@@ -329,14 +335,21 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       }
     }
 
+    const hasValidVin = vinNumber.trim().length >= 6;
+    const hasYear = /^\d{4}$/.test(vehicleYear.trim());
+    const hasModelName = vehicleModel.trim().length >= 2;
+
     if (modal.type === 'service') {
       if (!vehicleReg.trim()) {
         errors.vehicleReg = 'Vehicle registration number is required.';
       }
       if (!vinNumber.trim()) {
-        errors.vinNumber = 'VIN number is required.';
-      } else if (vinNumber.trim().length < 6) {
-        errors.vinNumber = 'Enter a valid VIN number.';
+        errors.vinNumber = 'VIN number is mandatory for service bookings.';
+      } else if (!hasValidVin) {
+        errors.vinNumber = 'Enter a valid VIN number (at least 6 characters).';
+      }
+      if (vehicleYear.trim() && !hasYear) {
+        errors.vehicleYear = 'Enter a 4-digit vehicle year (e.g. 2019).';
       }
       if (!mileageKm.trim()) {
         errors.mileageKm = 'Current mileage (km) is required.';
@@ -353,13 +366,19 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     }
 
     if (modal.type === 'parts') {
-      if (!vehicleReg.trim()) {
-        errors.vehicleReg = 'Vehicle registration number is required.';
-      }
-      if (!vinNumber.trim()) {
-        errors.vinNumber = 'VIN number is required for OEM part verification.';
-      } else if (vinNumber.trim().length < 6) {
-        errors.vinNumber = 'Enter a valid VIN number.';
+      if (!hasValidVin && !(hasYear && hasModelName)) {
+        if (!vinNumber.trim() && !vehicleYear.trim() && !vehicleModel.trim()) {
+          errors.vinNumber =
+            'Provide your VIN number OR type the Vehicle Year and Make/Model.';
+          errors.vehicleYear = 'Required if VIN is not entered.';
+          errors.vehicleModel = 'Required if VIN is not entered.';
+        } else {
+          if (vinNumber.trim() && !hasValidVin) {
+            errors.vinNumber = 'Enter at least 6 characters (17-character VAG VIN recommended).';
+          }
+          if (!hasYear) errors.vehicleYear = 'Enter a 4-digit year (e.g. 2020), or enter VIN.';
+          if (!hasModelName) errors.vehicleModel = 'Type the Make & Model (e.g. Audi Q5), or enter VIN.';
+        }
       }
       if (!notes.trim()) {
         errors.notes = 'Specify the part description or part number required.';
@@ -379,6 +398,10 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     setErrorSummary('');
     setSubmittedRef(ref);
 
+    const typedVagLabel = [vehicleYear.trim(), vehicleModel.trim()].filter(Boolean).join(' ');
+    const aftersalesVehicleTitle =
+      typedVagLabel || (vinNumber.trim() ? `VIN ${vinNumber.trim()}` : 'VAG Group Vehicle');
+
     void submitLead({
       id: ref.toLowerCase(),
       leadType: modal.type as LeadSubmissionType,
@@ -391,15 +414,17 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
           : modal.type === 'competition-entry'
           ? modal.competitionTitle || 'Dealership Competition Entry'
           : modal.type === 'service'
-          ? `${serviceType} — ${selectedModel}`
+          ? `${serviceType} — ${aftersalesVehicleTitle}`
+          : modal.type === 'parts'
+          ? `Genuine VAG Parts — ${aftersalesVehicleTitle}`
           : `${activeMeta.title} — ${selectedModel}`,
       details:
         modal.type === 'test-drive'
           ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
           : modal.type === 'service'
-          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
+          ? `Vehicle: ${typedVagLabel || 'Identified by VIN'} | Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
           : modal.type === 'parts'
-          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Part Required: ${notes}`
+          ? `Vehicle: ${typedVagLabel || 'Identified by VIN'} | VIN: ${vinNumber || 'Not provided'} | Reg: ${vehicleReg || 'Not provided'} | Part Required: ${notes}`
           : notes || modal.dealSummary || 'General enquiry submitted.',
       homeDealershipId: effectiveHomeBranchId,
     });
@@ -501,7 +526,12 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
             )}
             {modal.type === 'service' && (
               <>
-                <p>Vehicle Model: {selectedModel}</p>
+                {(vehicleYear.trim() || vehicleModel.trim()) && (
+                  <p>
+                    Vehicle:{' '}
+                    {[vehicleYear.trim(), vehicleModel.trim()].filter(Boolean).join(' ')}
+                  </p>
+                )}
                 <p>Service Type: {serviceType}</p>
                 <p>Registration: {vehicleReg.trim()}</p>
                 <p>VIN: {vinNumber.trim()}</p>
@@ -511,9 +541,14 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
             )}
             {modal.type === 'parts' && (
               <>
-                <p>Vehicle Model: {selectedModel}</p>
-                <p>Registration: {vehicleReg.trim()}</p>
-                <p>VIN: {vinNumber.trim()}</p>
+                {(vehicleYear.trim() || vehicleModel.trim()) && (
+                  <p>
+                    Vehicle:{' '}
+                    {[vehicleYear.trim(), vehicleModel.trim()].filter(Boolean).join(' ')}
+                  </p>
+                )}
+                {vehicleReg.trim() && <p>Registration: {vehicleReg.trim()}</p>}
+                {vinNumber.trim() && <p>VIN: {vinNumber.trim()}</p>}
               </>
             )}
             {modal.financePreset && modal.type === 'finance' && (
@@ -646,26 +681,29 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
               )}
             </div>
 
-            {modal.type !== 'event-rsvp' && modal.type !== 'competition-entry' && (
-              <div>
-                <Label htmlFor="modal-model">Volkswagen Model</Label>
-                <Select
-                  id="modal-model"
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                >
-                  {activeVehicles.map((m) => (
-                    <option key={m.id} value={m.title}>
-                      {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
-                    </option>
-                  ))}
-                  {modal.vehicleName &&
-                    !activeVehicles.some((m) => m.title === modal.vehicleName) && (
-                      <option value={modal.vehicleName}>{modal.vehicleName}</option>
-                    )}
-                </Select>
-              </div>
-            )}
+            {modal.type !== 'event-rsvp' &&
+              modal.type !== 'competition-entry' &&
+              modal.type !== 'service' &&
+              modal.type !== 'parts' && (
+                <div>
+                  <Label htmlFor="modal-model">Volkswagen Model</Label>
+                  <Select
+                    id="modal-model"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    {activeVehicles.map((m) => (
+                      <option key={m.id} value={m.title}>
+                        {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
+                      </option>
+                    ))}
+                    {modal.vehicleName &&
+                      !activeVehicles.some((m) => m.title === modal.vehicleName) && (
+                        <option value={modal.vehicleName}>{modal.vehicleName}</option>
+                      )}
+                  </Select>
+                </div>
+              )}
           </div>
 
           {modal.type === 'test-drive' && (
@@ -729,6 +767,58 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
 
           {modal.type === 'service' && (
             <>
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
+                <p className="text-xs font-semibold text-[#001E50]">
+                  VAG Vehicle Identification (VW, Audi, Porsche, SEAT &amp; Škoda)
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                  <div className="sm:col-span-5">
+                    <Label htmlFor="modal-vin">VIN Number *</Label>
+                    <Input
+                      id="modal-vin"
+                      placeholder="17-digit VAG VIN"
+                      value={vinNumber}
+                      aria-invalid={Boolean(fieldErrors.vinNumber)}
+                      className={cn('bg-white font-mono', fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
+                      onChange={(e) => {
+                        setVinNumber(e.target.value.toUpperCase());
+                        clearFieldError('vinNumber');
+                      }}
+                      required
+                    />
+                    {fieldErrors.vinNumber && (
+                      <p className="mt-1 text-[11px] font-medium text-red-700">
+                        {fieldErrors.vinNumber}
+                      </p>
+                    )}
+                  </div>
+                  <div className="sm:col-span-3">
+                    <Label htmlFor="modal-year">Year (Optional)</Label>
+                    <Input
+                      id="modal-year"
+                      maxLength={4}
+                      placeholder="e.g. 2019"
+                      value={vehicleYear}
+                      className={cn('bg-white font-mono', fieldErrors.vehicleYear && ERROR_INPUT_CLASS)}
+                      onChange={(e) => {
+                        setVehicleYear(e.target.value.replace(/[^\d]/g, '').slice(0, 4));
+                        clearFieldError('vehicleYear');
+                      }}
+                    />
+                  </div>
+                  <div className="sm:col-span-4">
+                    <Label htmlFor="modal-vag-model">Make &amp; Model (Optional)</Label>
+                    <Input
+                      id="modal-vag-model"
+                      placeholder="e.g. Audi Q5 / VW Polo"
+                      value={vehicleModel}
+                      className="bg-white"
+                      onChange={(e) => setVehicleModel(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <Label htmlFor="modal-service-type">Service Type *</Label>
                 <Select
@@ -743,7 +833,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <Label htmlFor="modal-reg">Vehicle Registration *</Label>
                   <Input
@@ -761,26 +851,6 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                   {fieldErrors.vehicleReg && (
                     <p className="mt-1 text-[11px] font-medium text-red-700">
                       {fieldErrors.vehicleReg}
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <Label htmlFor="modal-vin">VIN Number *</Label>
-                  <Input
-                    id="modal-vin"
-                    placeholder="17-digit VIN"
-                    value={vinNumber}
-                    aria-invalid={Boolean(fieldErrors.vinNumber)}
-                    className={cn(fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
-                    onChange={(e) => {
-                      setVinNumber(e.target.value.toUpperCase());
-                      clearFieldError('vinNumber');
-                    }}
-                    required
-                  />
-                  {fieldErrors.vinNumber && (
-                    <p className="mt-1 text-[11px] font-medium text-red-700">
-                      {fieldErrors.vinNumber}
                     </p>
                   )}
                 </div>
@@ -834,46 +904,87 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
           )}
 
           {modal.type === 'parts' && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-4">
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
+                <p className="text-xs font-semibold text-[#001E50]">
+                  Identify VAG Vehicle (Enter VIN OR Type Year + Make/Model)
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                  <div className="sm:col-span-5">
+                    <Label htmlFor="modal-vin">VIN Number (Recommended)</Label>
+                    <Input
+                      id="modal-vin"
+                      placeholder="17-digit VAG VIN"
+                      value={vinNumber}
+                      aria-invalid={Boolean(fieldErrors.vinNumber)}
+                      className={cn('bg-white font-mono', fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
+                      onChange={(e) => {
+                        setVinNumber(e.target.value.toUpperCase());
+                        clearFieldError('vinNumber');
+                        clearFieldError('vehicleYear');
+                        clearFieldError('vehicleModel');
+                      }}
+                    />
+                    {fieldErrors.vinNumber && (
+                      <p className="mt-1 text-[11px] font-medium text-red-700">
+                        {fieldErrors.vinNumber}
+                      </p>
+                    )}
+                  </div>
+                  <div className="sm:col-span-3">
+                    <Label htmlFor="modal-parts-year">
+                      Year {vinNumber.trim().length < 6 ? '*' : ''}
+                    </Label>
+                    <Input
+                      id="modal-parts-year"
+                      maxLength={4}
+                      placeholder="e.g. 2018"
+                      value={vehicleYear}
+                      className={cn('bg-white font-mono', fieldErrors.vehicleYear && ERROR_INPUT_CLASS)}
+                      onChange={(e) => {
+                        setVehicleYear(e.target.value.replace(/[^\d]/g, '').slice(0, 4));
+                        clearFieldError('vehicleYear');
+                        clearFieldError('vinNumber');
+                      }}
+                    />
+                    {fieldErrors.vehicleYear && (
+                      <p className="mt-1 text-[11px] font-medium text-red-700">
+                        {fieldErrors.vehicleYear}
+                      </p>
+                    )}
+                  </div>
+                  <div className="sm:col-span-4">
+                    <Label htmlFor="modal-parts-model">
+                      Make &amp; Model {vinNumber.trim().length < 6 ? '*' : ''}
+                    </Label>
+                    <Input
+                      id="modal-parts-model"
+                      placeholder="e.g. Porsche Macan / VW Golf"
+                      value={vehicleModel}
+                      className={cn('bg-white', fieldErrors.vehicleModel && ERROR_INPUT_CLASS)}
+                      onChange={(e) => {
+                        setVehicleModel(e.target.value);
+                        clearFieldError('vehicleModel');
+                        clearFieldError('vinNumber');
+                      }}
+                    />
+                    {fieldErrors.vehicleModel && (
+                      <p className="mt-1 text-[11px] font-medium text-red-700">
+                        {fieldErrors.vehicleModel}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div>
-                <Label htmlFor="modal-reg">Vehicle Registration *</Label>
+                <Label htmlFor="modal-reg">Vehicle Registration (Optional)</Label>
                 <Input
                   id="modal-reg"
                   placeholder="e.g. NN 45210"
                   value={vehicleReg}
-                  aria-invalid={Boolean(fieldErrors.vehicleReg)}
-                  className={cn(fieldErrors.vehicleReg && ERROR_INPUT_CLASS)}
-                  onChange={(e) => {
-                    setVehicleReg(e.target.value);
-                    clearFieldError('vehicleReg');
-                  }}
-                  required
+                  onChange={(e) => setVehicleReg(e.target.value)}
                 />
-                {fieldErrors.vehicleReg && (
-                  <p className="mt-1 text-[11px] font-medium text-red-700">
-                    {fieldErrors.vehicleReg}
-                  </p>
-                )}
-              </div>
-              <div>
-                <Label htmlFor="modal-vin">VIN Number *</Label>
-                <Input
-                  id="modal-vin"
-                  placeholder="17-digit VIN"
-                  value={vinNumber}
-                  aria-invalid={Boolean(fieldErrors.vinNumber)}
-                  className={cn(fieldErrors.vinNumber && ERROR_INPUT_CLASS)}
-                  onChange={(e) => {
-                    setVinNumber(e.target.value.toUpperCase());
-                    clearFieldError('vinNumber');
-                  }}
-                  required
-                />
-                {fieldErrors.vinNumber && (
-                  <p className="mt-1 text-[11px] font-medium text-red-700">
-                    {fieldErrors.vinNumber}
-                  </p>
-                )}
               </div>
             </div>
           )}
