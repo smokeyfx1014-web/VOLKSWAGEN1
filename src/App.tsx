@@ -5,45 +5,48 @@
 
 import React, { useEffect, useState } from 'react';
 import { MotionConfig } from 'motion/react';
+import { AdminPortalPage } from './components/AdminPortalPage';
+import { AftersalesPage } from './components/AftersalesPage';
 import { DedicatedBookingPage } from './components/BookingPageShell';
 import { ContactSection } from './components/ContactSection';
 import { DealershipModals } from './components/DealershipModals';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { FinanceSection } from './components/FinanceSection';
 import { Footer } from './components/Footer';
 import { HeroSection } from './components/HeroSection';
+import { HomeOverviewHub } from './components/HomeOverviewHub';
+import { HomeShowroomCarousel } from './components/HomeShowroomCarousel';
 import {
   PrivacyPolicyPage,
   SitemapPage,
   TermsPage,
 } from './components/LegalAndSitemapPages';
-import { MasterCarsSection } from './components/MasterCarsSection';
-import { MotoringNewsSection } from './components/MotoringNewsSection';
 import { Navbar } from './components/Navbar';
-import {
-  InventoryFilterMode,
-  NewVehiclesSection,
-} from './components/NewVehiclesSection';
-import { ServicePartsSection } from './components/ServicePartsSection';
+import { NewsAndEventsPage } from './components/NewsAndEventsPage';
 import { ShowroomInventoryView } from './components/ShowroomInventoryView';
-import { StartingPointSection } from './components/StartingPointSection';
 import { VwAlertEmergencyBar, VwAlertPage } from './components/VwAlertSection';
-import { ROUTE_SEO_META } from './data/dealership';
-import { AppRoute, ModalContextState, VehicleCategory } from './types/dealership';
+import { DealershipProvider, useDealership } from './context/DealershipContext';
+import { DealershipDataProvider } from './context/DealershipDataContext';
+import { getRouteSeoMeta } from './data/dealership';
+import { AppRoute, ModalContextState } from './types/dealership';
 
 const VALID_ROUTES: AppRoute[] = [
   '/',
   '/vehicles',
   '/specials',
   '/test-drive',
+  '/aftersales',
   '/service',
   '/parts',
   '/finance',
   '/vw-alert',
+  '/news-events',
   '/news',
   '/contact',
   '/privacy-policy',
   '/terms',
   '/sitemap',
+  '/admin',
 ];
 
 function normalizeRoute(pathname: string): AppRoute {
@@ -51,12 +54,11 @@ function normalizeRoute(pathname: string): AppRoute {
   return (VALID_ROUTES.includes(lower as AppRoute) ? lower : '/') as AppRoute;
 }
 
-export default function App() {
+function DealershipShell() {
+  const { activeDealership } = useDealership();
   const [currentRoute, setCurrentRoute] = useState<AppRoute>(() =>
     normalizeRoute(window.location.pathname)
   );
-  const [activeCategory, setActiveCategory] = useState<VehicleCategory>('All');
-  const [filterMode, setFilterMode] = useState<InventoryFilterMode>('all');
   const [modal, setModal] = useState<ModalContextState>({ type: null });
 
   useEffect(() => {
@@ -68,44 +70,37 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const seo = ROUTE_SEO_META[currentRoute] ?? ROUTE_SEO_META['/'];
+    const seo = getRouteSeoMeta(currentRoute, activeDealership);
     document.title = seo.title;
+
     const metaDesc = document.querySelector('meta[name="description"]');
     if (metaDesc) {
       metaDesc.setAttribute('content', seo.description);
     }
-  }, [currentRoute]);
+
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      ogTitle.setAttribute('content', seo.title);
+    }
+
+    const ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) {
+      ogDesc.setAttribute('content', seo.description);
+    }
+  }, [currentRoute, activeDealership]);
 
   const navigateTo = (route: AppRoute) => {
     if (route !== currentRoute) {
-      window.history.pushState({}, '', route);
+      const currentParams = new URLSearchParams(window.location.search);
+      const branchParam = currentParams.get('branch');
+      const nextUrl = branchParam
+        ? `${route}?branch=${encodeURIComponent(branchParam)}`
+        : route;
+
+      window.history.pushState({}, '', nextUrl);
       setCurrentRoute(route);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const scrollToSection = (id: string) => {
-    if (currentRoute !== '/') {
-      window.history.pushState({}, '', '/');
-      setCurrentRoute('/');
-      window.setTimeout(() => {
-        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
-      }, 60);
-      return;
-    }
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const handleExploreModels = () => {
-    setActiveCategory('All');
-    setFilterMode('all');
-    scrollToSection('new-vehicles');
-  };
-
-  const handleShowInStock = () => {
-    setActiveCategory('All');
-    setFilterMode('in-stock');
-    scrollToSection('new-vehicles');
   };
 
   const renderPageContent = () => {
@@ -114,8 +109,8 @@ export default function App() {
         return (
           <ShowroomInventoryView
             mode="vehicles"
-            onBookTestDrive={(vehicleName) =>
-              setModal({ type: 'test-drive', vehicleName })
+            onBookTestDrive={(vehicleName, homeDealershipId) =>
+              setModal({ type: 'test-drive', vehicleName, homeDealershipId })
             }
             onEnquireDeal={(item) =>
               setModal({
@@ -123,6 +118,7 @@ export default function App() {
                 vehicleName: item.title,
                 vehiclePrice: item.price,
                 dealSummary: item.dealSummary,
+                homeDealershipId: item.homeDealershipId,
               })
             }
           />
@@ -131,8 +127,8 @@ export default function App() {
         return (
           <ShowroomInventoryView
             mode="specials"
-            onBookTestDrive={(vehicleName) =>
-              setModal({ type: 'test-drive', vehicleName })
+            onBookTestDrive={(vehicleName, homeDealershipId) =>
+              setModal({ type: 'test-drive', vehicleName, homeDealershipId })
             }
             onEnquireDeal={(item) =>
               setModal({
@@ -140,16 +136,25 @@ export default function App() {
                 vehicleName: item.title,
                 vehiclePrice: item.price,
                 dealSummary: item.dealSummary,
+                homeDealershipId: item.homeDealershipId,
+              })
+            }
+            onEnterCompetition={(competitionTitle) =>
+              setModal({
+                type: 'competition-entry',
+                competitionTitle,
+                homeDealershipId: activeDealership.id,
               })
             }
           />
         );
       case '/test-drive':
         return <DedicatedBookingPage mode="test-drive" />;
+      case '/aftersales':
       case '/service':
-        return <DedicatedBookingPage mode="service" />;
+        return <AftersalesPage initialTab="service" />;
       case '/parts':
-        return <DedicatedBookingPage mode="parts" />;
+        return <AftersalesPage initialTab="parts" />;
       case '/finance':
         return (
           <div className="pt-16">
@@ -160,6 +165,7 @@ export default function App() {
                   vehicleName: preset.vehicleName,
                   vehiclePrice: preset.vehiclePrice,
                   financePreset: preset,
+                  homeDealershipId: activeDealership.id,
                 })
               }
             />
@@ -169,18 +175,20 @@ export default function App() {
         return (
           <VwAlertPage
             onNavigate={navigateTo}
-            onBookService={() => setModal({ type: 'service' })}
+            onBookService={() => navigateTo('/aftersales')}
           />
         );
+      case '/news-events':
       case '/news':
         return (
-          <div className="pt-16">
-            <MotoringNewsSection
-              onSelectArticle={(article) =>
-                setModal({ type: 'news-reader', article })
-              }
-            />
-          </div>
+          <NewsAndEventsPage
+            onSelectArticle={(article) =>
+              setModal({ type: 'news-reader', article })
+            }
+            onRsvpEvent={(eventTitle, homeDealershipId) =>
+              setModal({ type: 'event-rsvp', eventTitle, homeDealershipId })
+            }
+          />
         );
       case '/contact':
         return (
@@ -194,79 +202,42 @@ export default function App() {
         return <TermsPage />;
       case '/sitemap':
         return <SitemapPage onNavigate={navigateTo} />;
+      case '/admin':
+        return <AdminPortalPage />;
       case '/':
       default:
         return (
           <>
             <HeroSection
-              onExploreModels={handleExploreModels}
+              onExploreModels={() => navigateTo('/vehicles')}
               onBookTestDrive={(modelName) =>
-                setModal({ type: 'test-drive', vehicleName: modelName })
+                setModal({
+                  type: 'test-drive',
+                  vehicleName: modelName,
+                  homeDealershipId: activeDealership.id,
+                })
               }
             />
 
             <VwAlertEmergencyBar onOpenVwAlert={() => navigateTo('/vw-alert')} />
 
-            <StartingPointSection
-              onExploreModels={handleExploreModels}
-              onShowInStock={handleShowInStock}
-              onBookTestDrive={() => setModal({ type: 'test-drive' })}
-              onOpenFinance={() => scrollToSection('finance')}
-              onScrollToContact={() => scrollToSection('contact')}
-            />
-
-            <NewVehiclesSection
-              activeCategory={activeCategory}
-              onCategoryChange={setActiveCategory}
-              filterMode={filterMode}
-              onFilterModeChange={setFilterMode}
-              onBookTestDrive={(vehicleName) =>
-                setModal({ type: 'test-drive', vehicleName })
+            <HomeShowroomCarousel
+              onNavigate={navigateTo}
+              onBookTestDrive={(vehicleName, homeDealershipId) =>
+                setModal({ type: 'test-drive', vehicleName, homeDealershipId })
               }
-              onRequestQuote={(vehicle) =>
+              onEnquireVehicle={(vehicle, dealSummary) =>
                 setModal({
                   type: 'vehicle-inquiry',
-                  vehicleName: vehicle.name,
-                  vehiclePrice: vehicle.priceFrom,
-                  dealSummary: vehicle.specialOfferSummary,
+                  vehicleName: vehicle.title,
+                  vehiclePrice: vehicle.price,
+                  dealSummary,
+                  homeDealershipId: vehicle.homeDealershipId,
                 })
               }
             />
 
-            <FinanceSection
-              onApplyFinance={(preset) =>
-                setModal({
-                  type: 'finance',
-                  vehicleName: preset.vehicleName,
-                  vehiclePrice: preset.vehiclePrice,
-                  financePreset: preset,
-                })
-              }
-            />
-
-            <ServicePartsSection
-              onBookService={() => setModal({ type: 'service' })}
-              onOrderParts={() => setModal({ type: 'parts' })}
-            />
-
-            <MotoringNewsSection
-              onSelectArticle={(article) =>
-                setModal({ type: 'news-reader', article })
-              }
-            />
-
-            <MasterCarsSection
-              onInquireVehicle={(listing) =>
-                setModal({
-                  type: 'vehicle-inquiry',
-                  vehicleName: listing.title,
-                  vehiclePrice: listing.price,
-                })
-              }
-              onViewAllMasterCars={() => navigateTo('/vehicles')}
-            />
-
-            <ContactSection />
+            <HomeOverviewHub onNavigate={navigateTo} />
           </>
         );
     }
@@ -278,7 +249,9 @@ export default function App() {
         <Navbar
           currentRoute={currentRoute}
           onNavigate={navigateTo}
-          onOpenTestDrive={() => setModal({ type: 'test-drive' })}
+          onOpenTestDrive={() =>
+            setModal({ type: 'test-drive', homeDealershipId: activeDealership.id })
+          }
         />
 
         <main className="flex-1">{renderPageContent()}</main>
@@ -291,5 +264,17 @@ export default function App() {
         />
       </div>
     </MotionConfig>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <DealershipProvider>
+        <DealershipDataProvider>
+          <DealershipShell />
+        </DealershipDataProvider>
+      </DealershipProvider>
+    </ErrorBoundary>
   );
 }

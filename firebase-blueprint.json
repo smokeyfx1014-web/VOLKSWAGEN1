@@ -1,0 +1,252 @@
+{
+  "entities": {
+    "Dealership": {
+      "title": "Dealership",
+      "description": "Multi-branch Volkswagen dealership configuration (Newcastle, Ermelo, Vryheid) under Asaf Auto Sales (Pty) Ltd.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "enum": ["1", "2", "3"] },
+        "name": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "shortName": { "type": "string", "minLength": 3, "maxLength": 60 },
+        "legalEntity": { "type": "string", "minLength": 3, "maxLength": 140 },
+        "fspNumber": { "type": "string", "minLength": 2, "maxLength": 30 },
+        "domain": { "type": "string", "minLength": 4, "maxLength": 120 },
+        "receptionNumber": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "whatsappNumber": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "physicalAddress": { "type": "string", "minLength": 5, "maxLength": 200 },
+        "postalAddress": { "type": "string", "maxLength": 160 },
+        "city": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "province": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "salesHours": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "serviceHours": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "roadsideAssist": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "vwFinancialServices": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "volkswagensure": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "mapEmbedUrl": { "type": "string", "maxLength": 600 },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "id",
+        "name",
+        "shortName",
+        "legalEntity",
+        "fspNumber",
+        "domain",
+        "receptionNumber",
+        "whatsappNumber",
+        "email",
+        "physicalAddress",
+        "postalAddress",
+        "city",
+        "province",
+        "salesHours",
+        "serviceHours",
+        "roadsideAssist",
+        "vwFinancialServices",
+        "volkswagensure",
+        "mapEmbedUrl",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Master Group Stock vehicle shared across all three branches with homeDealershipId physical location.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "title": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "make": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "model": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "year": { "type": "number" },
+        "price": { "type": "number" },
+        "monthlyFrom": { "type": "number" },
+        "mileage": { "type": "number" },
+        "transmission": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "fuelType": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "category": { "type": "string", "enum": ["New", "Used", "MasterCars"] },
+        "bodyStyle": { "type": "string", "enum": ["Hatchbacks & Sedans", "SUVs", "Commercial"] },
+        "powerKw": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "fuelEconomy": { "type": "string", "minLength": 2, "maxLength": 40 },
+        "colour": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "images": { "type": "array" },
+        "homeDealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "status": { "type": "string", "enum": ["available", "reserved", "sold"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "id",
+        "title",
+        "make",
+        "model",
+        "year",
+        "price",
+        "monthlyFrom",
+        "mileage",
+        "transmission",
+        "fuelType",
+        "category",
+        "bodyStyle",
+        "powerKw",
+        "fuelEconomy",
+        "colour",
+        "images",
+        "homeDealershipId",
+        "status",
+        "createdAt",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "Promotion": {
+      "title": "Promotion",
+      "description": "Specials, Events & Competitions scoped to MASTER (all 3 sites) or a specific BRANCH (1, 2, or 3).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "type": { "type": "string", "enum": ["special", "event", "competition"] },
+        "description": { "type": "string", "minLength": 5, "maxLength": 1000 },
+        "imageUrl": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "validUntil": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "maxLength": 10 },
+        "scope": { "type": "string", "enum": ["MASTER", "BRANCH"] },
+        "dealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "active": { "type": "boolean" },
+        "vehicleName": { "type": "string", "maxLength": 120 },
+        "offerPrice": { "type": "number" },
+        "monthlyFrom": { "type": "number" },
+        "eventTime": { "type": "string", "maxLength": 60 },
+        "location": { "type": "string", "maxLength": 140 },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "id",
+        "title",
+        "type",
+        "description",
+        "imageUrl",
+        "validUntil",
+        "scope",
+        "dealershipId",
+        "active",
+        "vehicleName",
+        "offerPrice",
+        "monthlyFrom",
+        "eventTime",
+        "location",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "NewsArticle": {
+      "title": "NewsArticle",
+      "description": "Motoring news articles published by dealership group administrators.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "title": { "type": "string", "minLength": 5, "maxLength": 180 },
+        "category": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "publishedDate": { "type": "string", "minLength": 4, "maxLength": 60 },
+        "readTime": { "type": "string", "minLength": 3, "maxLength": 30 },
+        "excerpt": { "type": "string", "minLength": 10, "maxLength": 400 },
+        "bodyText": { "type": "string", "minLength": 10, "maxLength": 6000 },
+        "featured": { "type": "boolean" },
+        "archived": { "type": "boolean" },
+        "imageSrc": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "id",
+        "title",
+        "category",
+        "publishedDate",
+        "readTime",
+        "excerpt",
+        "bodyText",
+        "featured",
+        "archived",
+        "imageSrc",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "LeadSubmission": {
+      "title": "LeadSubmission",
+      "description": "PII-protected customer test-drive, service, parts, finance, enquiry, competition, or event RSVP submission tagged with originating branch and optional home branch.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "leadType": {
+          "type": "string",
+          "enum": ["test-drive", "service", "parts", "finance", "vehicle-inquiry", "contact", "event-rsvp", "competition-entry"]
+        },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "phone": { "type": "string", "minLength": 7, "maxLength": 30 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "subject": { "type": "string", "minLength": 2, "maxLength": 200 },
+        "details": { "type": "string", "maxLength": 1500 },
+        "submittedAtDealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "homeDealershipId": { "type": "string" },
+        "status": { "type": "string", "enum": ["new", "contacted", "archived"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "leadType",
+        "fullName",
+        "phone",
+        "email",
+        "subject",
+        "details",
+        "submittedAtDealershipId",
+        "homeDealershipId",
+        "status",
+        "createdAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized dealership group administrator roster.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "email": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "role": { "type": "string", "enum": ["admin"] },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "addedAt"]
+    }
+  },
+  "firestore": {
+    "/dealerships/{branchId}": {
+      "schema": { "$ref": "#/entities/Dealership" },
+      "description": "Branch metadata and contact settings for ID 1 (Newcastle), ID 2 (Ermelo), and ID 3 (Vryheid)."
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": { "$ref": "#/entities/Vehicle" },
+      "description": "Shared Master Group Stock displayed across all three websites."
+    },
+    "/promotions/{promotionId}": {
+      "schema": { "$ref": "#/entities/Promotion" },
+      "description": "Specials, Events, and Competitions scoped globally (MASTER) or to a specific branch."
+    },
+    "/news/{articleId}": {
+      "schema": { "$ref": "#/entities/NewsArticle" },
+      "description": "Motoring news articles."
+    },
+    "/leads/{leadId}": {
+      "schema": { "$ref": "#/entities/LeadSubmission" },
+      "description": "PII-protected customer callback and booking submissions tagged with branch IDs."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized dealership administrators."
+    }
+  }
+}

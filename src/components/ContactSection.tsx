@@ -9,13 +9,24 @@ import {
   Phone,
   ShieldAlert,
 } from 'lucide-react';
-import { CONTACT_CARD_ASSETS, DEALERSHIP_INFO } from '../data/dealership';
-import { generateBookingRef } from '../lib/utils';
+import { useDealership } from '../context/DealershipContext';
+import { useDealershipData } from '../context/DealershipDataContext';
+import { CONTACT_CARD_ASSETS, GROUP_CORPORATE_INFO } from '../data/dealership';
+import {
+  generateBookingRef,
+  toGoogleMapsSearchUrl,
+  toIntlPhoneDisplay,
+  toTelHref,
+  toWhatsAppHref,
+} from '../lib/utils';
 import { DealershipImage } from './DealershipImage';
 import { FadeUp, SectionHeader } from './MotionPrimitives';
 import { Button, Input, Label, Select, Textarea } from './ui/shadcn';
 
 export function ContactSection() {
+  const { activeDealership } = useDealership();
+  const { submitLead } = useDealershipData();
+
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -23,6 +34,9 @@ export function ContactSection() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [confirmationRef, setConfirmationRef] = useState<string | null>(null);
+
+  const mapsUrl = toGoogleMapsSearchUrl(activeDealership.physicalAddress);
+  const whatsappHref = toWhatsAppHref(activeDealership.whatsappNumber, activeDealership.name);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,8 +48,19 @@ export function ContactSection() {
       setError('Please enter a valid email address.');
       return;
     }
+    const ref = generateBookingRef('ENQ', activeDealership.id);
     setError('');
-    setConfirmationRef(generateBookingRef('ENQ'));
+    setConfirmationRef(ref);
+    void submitLead({
+      id: ref.toLowerCase(),
+      leadType: 'contact',
+      fullName: name,
+      phone,
+      email,
+      subject: `Contact Enquiry — ${department} (${activeDealership.shortName})`,
+      details: message.trim() || 'Direct contact form submission.',
+      homeDealershipId: activeDealership.id,
+    });
   };
 
   const resetForm = () => {
@@ -52,17 +77,17 @@ export function ContactSection() {
       aria-labelledby="contact-heading"
       className="bg-white py-16 sm:py-24"
     >
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-12">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <SectionHeader
-            kicker="Visit & Connect"
-            title="Newcastle Volkswagen Contact Centre"
-            description="Visit our showroom in the heart of Newcastle CBD or connect directly with Sales, Service, Parts, or Compliance."
+            kicker={`Visit & Connect · ${activeDealership.city}`}
+            title={`${activeDealership.name} Contact Centre`}
+            description={`Visit our ${activeDealership.city} showroom at ${activeDealership.physicalAddress} or connect directly with Sales, Service, Parts, or Compliance.`}
           />
 
           <FadeUp delay={0.08} className="flex flex-wrap items-center gap-3">
             <a
-              href={DEALERSHIP_INFO.mapsUrl}
+              href={mapsUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#CBD5E1] bg-white px-4 text-xs font-semibold text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC] whitespace-nowrap"
@@ -71,19 +96,21 @@ export function ContactSection() {
               <span>Get Directions</span>
               <ExternalLink className="h-3 w-3" />
             </a>
-            <a
-              href={DEALERSHIP_INFO.whatsappHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#001E50] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#00437A] whitespace-nowrap"
-            >
-              <MessageCircle className="h-3.5 w-3.5" />
-              <span>Chat on WhatsApp</span>
-            </a>
+            {whatsappHref && (
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#001E50] px-4 text-xs font-semibold text-white transition-colors hover:bg-[#00437A] whitespace-nowrap"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                <span>WhatsApp ({activeDealership.whatsappNumber})</span>
+              </a>
+            )}
           </FadeUp>
         </div>
 
-        <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-12">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           {/* Left 4 Contact Cards */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-6">
             <FadeUp>
@@ -91,7 +118,7 @@ export function ContactSection() {
                 <div>
                   <DealershipImage
                     asset={CONTACT_CARD_ASSETS.showroom}
-                    alt="Newcastle Volkswagen 77 Allen Street Showroom"
+                    alt={`${activeDealership.name} Showroom`}
                     className="border-b border-[#E2E8F0]"
                   />
                   <div className="p-5">
@@ -101,22 +128,22 @@ export function ContactSection() {
                         id="contact-heading"
                         className="font-display text-base font-semibold text-[#091224]"
                       >
-                        Physical & Postal Address
+                        Dealership Address
                       </h3>
                     </div>
                     <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                      {DEALERSHIP_INFO.street}
+                      {activeDealership.physicalAddress}
                       <br />
-                      {DEALERSHIP_INFO.city}
-                      <br />
-                      {DEALERSHIP_INFO.province}
+                      {activeDealership.city}, {activeDealership.province}
                     </p>
                   </div>
                 </div>
                 <div className="mx-5 mb-5 flex items-center justify-between border-t border-[#E2E8F0] pt-3 text-xs">
-                  <span className="font-mono text-[#64748B]">{DEALERSHIP_INFO.postal}</span>
+                  <span className="font-mono text-[#64748B]">
+                    {activeDealership.postalAddress || activeDealership.domain}
+                  </span>
                   <a
-                    href={DEALERSHIP_INFO.mapsUrl}
+                    href={mapsUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="font-semibold text-[#001E50] hover:underline"
@@ -132,34 +159,34 @@ export function ContactSection() {
                 <div>
                   <DealershipImage
                     asset={CONTACT_CARD_ASSETS.support}
-                    alt="Newcastle Volkswagen Customer Switchboard"
+                    alt={`${activeDealership.name} Reception Switchboard`}
                     className="border-b border-[#E2E8F0]"
                   />
                   <div className="p-5">
                     <div className="flex items-center gap-2 text-[#001E50]">
                       <Phone className="h-4 w-4 shrink-0" aria-hidden="true" />
                       <h3 className="font-display text-base font-semibold text-[#091224]">
-                        Switchboard & Compliance
+                        Reception &amp; Compliance
                       </h3>
                     </div>
                     <p className="mt-2 text-sm text-[#475569]">
-                      Sales, MasterCars, Finance (FSP {DEALERSHIP_INFO.fspNumber}), Service & Parts.
+                      Sales, MasterCars, Finance (FSP {activeDealership.fspNumber}), Service &amp; Parts.
                     </p>
                   </div>
                 </div>
                 <div className="mx-5 mb-5 border-t border-[#E2E8F0] pt-3 space-y-1">
                   <a
-                    href={DEALERSHIP_INFO.phoneHref}
+                    href={toTelHref(activeDealership.receptionNumber)}
                     className="block font-mono text-base font-semibold text-[#001E50] hover:underline tabular-nums"
                   >
-                    {DEALERSHIP_INFO.phoneIntl}
+                    {toIntlPhoneDisplay(activeDealership.receptionNumber)}
                   </a>
                   <a
-                    href={`mailto:${DEALERSHIP_INFO.complianceEmail}`}
+                    href={`mailto:${activeDealership.email}`}
                     className="inline-flex items-center gap-1.5 text-xs text-[#475569] hover:text-[#001E50]"
                   >
                     <Mail className="h-3.5 w-3.5" />
-                    <span>{DEALERSHIP_INFO.complianceEmail}</span>
+                    <span>{activeDealership.email}</span>
                   </a>
                 </div>
               </div>
@@ -170,25 +197,29 @@ export function ContactSection() {
                 <div>
                   <DealershipImage
                     asset={CONTACT_CARD_ASSETS.financeTeam}
-                    alt="Newcastle Volkswagen Sales & Finance Specialists"
+                    alt={`${activeDealership.name} Sales & Finance Specialists`}
                     className="border-b border-[#E2E8F0]"
                   />
                   <div className="p-5">
                     <div className="flex items-center gap-2 text-[#001E50]">
                       <Clock className="h-4 w-4 shrink-0" aria-hidden="true" />
                       <h3 className="font-display text-base font-semibold text-[#091224]">
-                        Department Trading Hours
+                        Branch Trading Hours
                       </h3>
                     </div>
                     <dl className="mt-3 space-y-2 text-xs">
-                      {DEALERSHIP_INFO.hours.map((item) => (
-                        <div key={item.label} className="flex justify-between gap-2">
-                          <dt className="text-[#475569]">{item.label}</dt>
-                          <dd className="font-mono font-medium text-[#091224] whitespace-nowrap tabular-nums">
-                            {item.value}
-                          </dd>
-                        </div>
-                      ))}
+                      <div>
+                        <dt className="text-[#475569] font-medium">Sales Showroom</dt>
+                        <dd className="font-mono text-[#091224] mt-0.5">
+                          {activeDealership.salesHours}
+                        </dd>
+                      </div>
+                      <div className="pt-1 border-t border-[#E2E8F0]">
+                        <dt className="text-[#475569] font-medium">Service &amp; Parts</dt>
+                        <dd className="font-mono text-[#091224] mt-0.5">
+                          {activeDealership.serviceHours}
+                        </dd>
+                      </div>
                     </dl>
                   </div>
                 </div>
@@ -200,30 +231,32 @@ export function ContactSection() {
                 <div>
                   <DealershipImage
                     asset={CONTACT_CARD_ASSETS.vwAlert}
-                    alt="VW Alert 24/7 Roadside Assistance"
+                    alt="VW National Assistance Numbers"
                     className="border-b border-white/15"
                   />
                   <div className="p-5">
                     <div className="flex items-center gap-2 text-white">
                       <ShieldAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
                       <h3 className="font-display text-base font-semibold">
-                        24/7 VW Alert Roadside Assistance
+                        24/7 VW Alert &amp; National Care
                       </h3>
                     </div>
-                    <p className="mt-2 text-sm leading-relaxed text-white/80">
-                      Emergency breakdown recovery anywhere in SA or cross-border.
+                    <p className="mt-2 text-xs leading-relaxed text-white/80">
+                      VW Financial Services: {activeDealership.vwFinancialServices}
+                      <br />
+                      VolkswagenSure: {activeDealership.volkswagensure}
                     </p>
                   </div>
                 </div>
                 <div className="mx-5 mb-5 border-t border-white/15 pt-3 space-y-1">
                   <a
-                    href="tel:0860434737"
+                    href={toTelHref(activeDealership.roadsideAssist)}
                     className="block font-mono text-base font-semibold tracking-tight text-white hover:underline tabular-nums"
                   >
-                    {DEALERSHIP_INFO.vwAlert} · {DEALERSHIP_INFO.vwRoadsideTollFree}
+                    {activeDealership.roadsideAssist} · {GROUP_CORPORATE_INFO.vwRoadsideTollFree}
                   </a>
                   <p className="font-mono text-[11px] text-white/70 tabular-nums">
-                    Cross-border: {DEALERSHIP_INFO.vwRoadsideCrossBorder}
+                    Cross-border: {GROUP_CORPORATE_INFO.vwRoadsideCrossBorder}
                   </p>
                 </div>
               </div>
@@ -239,10 +272,10 @@ export function ContactSection() {
                     <CheckCircle2 className="h-6 w-6" />
                   </div>
                   <h3 className="mt-5 font-display text-2xl font-semibold text-[#091224]">
-                    Message received by {department}
+                    Message received by {activeDealership.shortName} ({department})
                   </h3>
                   <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                    Thank you, {name}. A Newcastle Volkswagen specialist will reach out to you on{' '}
+                    Thank you, {name}. A {activeDealership.name} specialist will reach out to you on{' '}
                     <span className="font-mono text-[#091224]">{phone}</span> shortly.
                   </p>
                   <div className="mt-5 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-xs font-mono text-[#091224]">
@@ -256,10 +289,10 @@ export function ContactSection() {
                 <form onSubmit={handleSubmit} noValidate className="space-y-4">
                   <div>
                     <h3 className="font-display text-xl font-semibold text-[#091224]">
-                      Send a Direct Enquiry
+                      Message {activeDealership.name}
                     </h3>
                     <p className="mt-1 text-sm text-[#475569]">
-                      Select your preferred department and we will reply promptly during business hours.
+                      Select your preferred department and our {activeDealership.city} team will respond promptly.
                     </p>
                   </div>
 
@@ -336,7 +369,7 @@ export function ContactSection() {
 
                   <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
                     <p className="text-[11px] text-[#64748B]">
-                      Processed by {DEALERSHIP_INFO.legalEntity} in compliance with POPIA.
+                      Processed by {activeDealership.legalEntity} in compliance with POPIA.
                     </p>
                     <Button type="submit" size="lg">
                       Submit Enquiry
@@ -347,6 +380,38 @@ export function ContactSection() {
             </div>
           </FadeUp>
         </div>
+
+        {/* Dynamic Branch Google Map Embed */}
+        {activeDealership.mapEmbedUrl && (
+          <FadeUp delay={0.12}>
+            <div className="overflow-hidden rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E2E8F0] px-6 py-4 bg-white">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[#091224]">
+                  <MapPin className="h-4 w-4 text-[#001E50]" />
+                  <span>
+                    {activeDealership.name} — {activeDealership.physicalAddress}
+                  </span>
+                </div>
+                <a
+                  href={mapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold text-[#00437A] hover:underline inline-flex items-center gap-1"
+                >
+                  <span>Open in Google Maps</span>
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+              <iframe
+                title={`${activeDealership.name} Location Map`}
+                src={activeDealership.mapEmbedUrl}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                className="h-72 sm:h-80 w-full border-0"
+              />
+            </div>
+          </FadeUp>
+        )}
       </div>
     </section>
   );

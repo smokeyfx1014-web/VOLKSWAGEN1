@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import { useDealership } from '../context/DealershipContext';
+import { useDealershipData } from '../context/DealershipDataContext';
 import {
-  DEALERSHIP_INFO,
+  GROUP_CORPORATE_INFO,
   SATURDAY_TEST_DRIVE_SLOTS,
   SERVICE_PARTS_ASSETS,
   STARTING_POINT_ASSETS,
-  VEHICLE_MODELS,
   WEEKDAY_TEST_DRIVE_SLOTS,
 } from '../data/dealership';
 import { cn, generateBookingRef } from '../lib/utils';
@@ -55,10 +56,15 @@ const ERROR_INPUT_CLASS =
   'border-red-500 bg-red-50/40 focus-visible:border-red-600 focus-visible:ring-red-500/20';
 
 export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
+  const { activeDealership, dealershipsById } = useDealership();
+  const { activeVehicles, submitLead } = useDealershipData();
+
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [selectedModel, setSelectedModel] = useState(VEHICLE_MODELS[0].name);
+  const [selectedModel, setSelectedModel] = useState(
+    activeVehicles[0]?.title ?? '2026 Volkswagen Polo Vivo 1.4 Life'
+  );
   const [serviceType, setServiceType] = useState('Minor Scheduled Service');
   const [preferredDate, setPreferredDate] = useState(getNextBusinessDayISO);
   const [preferredTime, setPreferredTime] = useState('09:00');
@@ -70,6 +76,12 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
   const [errorSummary, setErrorSummary] = useState('');
   const [submittedRef, setSubmittedRef] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (activeVehicles.length > 0 && !activeVehicles.some((v) => v.title === selectedModel)) {
+      setSelectedModel(activeVehicles[0].title);
+    }
+  }, [activeVehicles, selectedModel]);
+
   const todayISO = useMemo(() => getTodayISO(), []);
   const selectedDay = useMemo(() => getDayOfWeek(preferredDate), [preferredDate]);
   const isSunday = selectedDay === 0;
@@ -80,6 +92,12 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
     if (isSaturday) return SATURDAY_TEST_DRIVE_SLOTS;
     return WEEKDAY_TEST_DRIVE_SLOTS;
   }, [isSunday, isSaturday]);
+
+  useEffect(() => {
+    if (availableTimeSlots.length > 0 && !availableTimeSlots.includes(preferredTime)) {
+      setPreferredTime(availableTimeSlots[0]);
+    }
+  }, [availableTimeSlots, preferredTime]);
 
   const clearError = (key: keyof FieldErrorMap) => {
     if (fieldErrors[key]) {
@@ -147,33 +165,58 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
     }
 
     const prefix = mode === 'test-drive' ? 'TD' : mode === 'service' ? 'SRV' : 'PRT';
+    const ref = generateBookingRef(prefix, activeDealership.id);
     setFieldErrors({});
     setErrorSummary('');
-    setSubmittedRef(generateBookingRef(prefix));
+    setSubmittedRef(ref);
+
+    const matchedVehicle = activeVehicles.find((v) => v.title === selectedModel);
+
+    void submitLead({
+      id: ref.toLowerCase(),
+      leadType: mode,
+      fullName,
+      phone,
+      email,
+      subject:
+        mode === 'test-drive'
+          ? `Test Drive — ${selectedModel}`
+          : mode === 'service'
+          ? `${serviceType} — ${selectedModel}`
+          : `Genuine Parts — ${selectedModel}`,
+      details:
+        mode === 'test-drive'
+          ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
+          : mode === 'service'
+          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
+          : `Reg: ${vehicleReg} | VIN: ${vinNumber} | Part Required: ${notes}`,
+      homeDealershipId:
+        mode === 'test-drive'
+          ? matchedVehicle?.homeDealershipId ?? activeDealership.id
+          : activeDealership.id,
+    });
   };
 
   const pageMeta =
     mode === 'test-drive'
       ? {
           kicker: 'Test Drive Experience',
-          title: 'Book a Test Drive in Newcastle',
-          description:
-            'Test drives operate Monday–Friday (09:00 – 15:00) and Saturday (09:00 – 11:00). Our sales executive will call to confirm your time slot or offer the next available window.',
+          title: `Book a Test Drive at ${activeDealership.name}`,
+          description: `Test drives operate ${GROUP_CORPORATE_INFO.testDriveHoursSummary}. Our ${activeDealership.shortName} sales executive will call to confirm your time slot or offer the next available window.`,
           asset: STARTING_POINT_ASSETS.testDrive,
           cta: 'Request Test Drive Slot',
         }
       : mode === 'service'
       ? {
           kicker: 'Approved Workshop',
-          title: 'Book Scheduled Service or Maintenance',
-          description:
-            'Service & Parts operate Monday–Friday (07:30 – 17:00) and Saturday by showroom appointment (08:00 – 12:00). Provide your VIN, registration, and mileage for confirmation.',
+          title: `Book Scheduled Service at ${activeDealership.shortName}`,
+          description: `Service & Parts operate ${activeDealership.serviceHours}. Provide your VIN, registration, and mileage for advisor confirmation.`,
           asset: SERVICE_PARTS_ASSETS.service,
           cta: 'Request Service Booking',
         }
       : {
           kicker: 'Genuine Parts Counter',
-          title: 'Order Genuine Volkswagen Parts',
+          title: `Order Genuine Volkswagen Parts — ${activeDealership.shortName}`,
           description:
             'Every Genuine Volkswagen Part carries a 2-year unlimited-kilometre warranty. Submit your VIN and part enquiry for a Parts Sales Executive callback before ordering.',
           asset: SERVICE_PARTS_ASSETS.parts,
@@ -200,19 +243,15 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                 <span>Department Hours</span>
               </div>
               {mode === 'test-drive' ? (
-                <p className="font-mono text-xs">{DEALERSHIP_INFO.testDriveHoursSummary}</p>
+                <div className="space-y-1.5 text-xs">
+                  <p className="font-mono text-[#091224]">{GROUP_CORPORATE_INFO.testDriveHoursSummary}</p>
+                  <p className="text-[#64748B]">Sales Showroom: {activeDealership.salesHours}</p>
+                </div>
               ) : (
-                <dl className="space-y-1.5 text-xs">
-                  {DEALERSHIP_INFO.servicePartsHours.map((h) => (
-                    <div key={h.label} className="flex justify-between">
-                      <dt>{h.label}</dt>
-                      <dd className="font-mono font-medium text-[#091224]">{h.value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <p className="font-mono text-xs text-[#091224]">{activeDealership.serviceHours}</p>
               )}
               <p className="text-xs text-[#64748B] pt-2 border-t border-[#E2E8F0]">
-                {DEALERSHIP_INFO.street} · {DEALERSHIP_INFO.phone}
+                {activeDealership.physicalAddress} · {activeDealership.receptionNumber}
               </p>
             </div>
           </div>
@@ -229,6 +268,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                   </h3>
                   <p className="text-sm leading-relaxed text-[#475569]">
                     Thank you, <strong className="text-[#091224]">{fullName}</strong>. Our{' '}
+                    {activeDealership.name}{' '}
                     {mode === 'test-drive'
                       ? 'sales specialist'
                       : mode === 'service'
@@ -245,6 +285,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                     <p>
                       Reference: <span className="font-semibold text-[#001E50]">{submittedRef}</span>
                     </p>
+                    <p>Branch: {activeDealership.name}</p>
                     <p>Model: {selectedModel}</p>
                     {(mode === 'service' || mode === 'parts') && (
                       <>
@@ -252,7 +293,9 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                         <p>VIN: {vinNumber}</p>
                       </>
                     )}
-                    {mode === 'service' && <p>Mileage: {Number(mileageKm).toLocaleString('en-ZA')} km</p>}
+                    {mode === 'service' && (
+                      <p>Mileage: {Number(mileageKm).toLocaleString('en-ZA')} km</p>
+                    )}
                   </div>
                   <Button variant="outline" onClick={() => setSubmittedRef(null)}>
                     Submit Another Request
@@ -344,9 +387,9 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                         value={selectedModel}
                         onChange={(e) => setSelectedModel(e.target.value)}
                       >
-                        {VEHICLE_MODELS.map((m) => (
-                          <option key={m.id} value={m.name}>
-                            {m.name}
+                        {activeVehicles.map((m) => (
+                          <option key={m.id} value={m.title}>
+                            {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
                           </option>
                         ))}
                       </Select>
@@ -364,7 +407,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                         <option>Minor Scheduled Service</option>
                         <option>Major Scheduled Service</option>
                         <option>Warranty Repair</option>
-                        <option>Mechanical Diagnostics & Repairs</option>
+                        <option>Mechanical Diagnostics &amp; Repairs</option>
                       </Select>
                     </div>
                   )}

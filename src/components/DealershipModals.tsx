@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import { useDealership } from '../context/DealershipContext';
+import { useDealershipData } from '../context/DealershipDataContext';
 import {
-  DEALERSHIP_INFO,
+  GROUP_CORPORATE_INFO,
   SATURDAY_TEST_DRIVE_SLOTS,
-  VEHICLE_MODELS,
   WEEKDAY_TEST_DRIVE_SLOTS,
 } from '../data/dealership';
 import { cn, formatZAR, generateBookingRef } from '../lib/utils';
-import { ModalContextState } from '../types/dealership';
+import { LeadSubmissionType, ModalContextState } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
@@ -61,10 +62,15 @@ const ERROR_INPUT_CLASS =
   'border-red-500 bg-red-50/40 focus-visible:border-red-600 focus-visible:ring-red-500/20';
 
 export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
+  const { activeDealership, dealershipsById } = useDealership();
+  const { activeVehicles, submitLead } = useDealershipData();
+
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [selectedModel, setSelectedModel] = useState(VEHICLE_MODELS[0].name);
+  const [selectedModel, setSelectedModel] = useState(
+    activeVehicles[0]?.title ?? '2026 Volkswagen Polo Vivo 1.4 Life'
+  );
   const [serviceType, setServiceType] = useState('Minor Scheduled Service');
   const [preferredDate, setPreferredDate] = useState(getNextBusinessDayISO);
   const [preferredTime, setPreferredTime] = useState('09:00');
@@ -97,13 +103,28 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     setVehicleReg('');
     setVinNumber('');
     setMileageKm('');
-    setNotes(modal.dealSummary ? `Enquiring on special: ${modal.dealSummary}` : '');
+    setNotes(
+      modal.dealSummary
+        ? `Enquiring on special: ${modal.dealSummary}`
+        : modal.eventTitle
+        ? `RSVP for event: ${modal.eventTitle}`
+        : modal.competitionTitle
+        ? `Competition entry: ${modal.competitionTitle}`
+        : ''
+    );
     if (modal.vehicleName) {
       setSelectedModel(modal.vehicleName);
-    } else {
-      setSelectedModel(VEHICLE_MODELS[0].name);
+    } else if (activeVehicles[0]?.title) {
+      setSelectedModel(activeVehicles[0].title);
     }
-  }, [modal.type, modal.vehicleName, modal.dealSummary]);
+  }, [
+    modal.type,
+    modal.vehicleName,
+    modal.dealSummary,
+    modal.eventTitle,
+    modal.competitionTitle,
+    activeVehicles,
+  ]);
 
   useEffect(() => {
     if (availableTimeSlots.length > 0 && !availableTimeSlots.includes(preferredTime)) {
@@ -150,32 +171,32 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
         title: 'POPIA Privacy Notice',
         subtitle: 'Protection of Personal Information Act (Act 4 of 2013)',
         paragraphs: [
-          'Asaf Auto Sales (Pty) Ltd t/a Newcastle Volkswagen collects and processes personal contact information strictly for responding to vehicle enquiries, test drive bookings, finance pre-qualification, workshop scheduling, and genuine parts orders.',
-          'Lead records for non-purchase enquiries are retained for up to 365 days unless you request earlier deletion. Direct POPIA access, correction, or deletion requests to Compliance Officer Ebrahim Docrat at ebrahim@docratgroup.co.za or +27 34 328 3600.',
+          `${activeDealership.legalEntity} t/a ${activeDealership.name} collects and processes personal contact information strictly for responding to vehicle enquiries, test drive bookings, finance pre-qualification, workshop scheduling, and genuine parts orders.`,
+          `Lead records for non-purchase enquiries are retained for up to 365 days unless you request earlier deletion. Direct POPIA access, correction, or deletion requests to Compliance Officer ${GROUP_CORPORATE_INFO.complianceOfficer} at ${GROUP_CORPORATE_INFO.complianceEmail} or ${activeDealership.receptionNumber}.`,
         ],
       },
       paia: {
         title: 'PAIA Section 51 Manual',
         subtitle: 'Promotion of Access to Information Act',
         paragraphs: [
-          'In accordance with the Promotion of Access to Information Act (Act 2 of 2000), Asaf Auto Sales (Pty) Ltd t/a Newcastle Volkswagen (Part of Docrat Group) maintains a statutory manual detailing record categories held across Sales, Finance & Insurance, Workshop Administration, and Human Resources.',
-          'Formal information requests may be directed to Information Officer Ebrahim Docrat (ebrahim@docratgroup.co.za) at P.O. Box 2933, Newcastle, 2940.',
+          `In accordance with the Promotion of Access to Information Act (Act 2 of 2000), ${activeDealership.legalEntity} t/a ${activeDealership.name} (Part of ${GROUP_CORPORATE_INFO.groupName}) maintains a statutory manual detailing record categories held across Sales, Finance & Insurance, Workshop Administration, and Human Resources.`,
+          `Formal information requests may be directed to Information Officer ${GROUP_CORPORATE_INFO.complianceOfficer} (${GROUP_CORPORATE_INFO.complianceEmail}) at ${activeDealership.postalAddress || activeDealership.physicalAddress}.`,
         ],
       },
       mastercars: {
         title: 'MasterCars Promise & Terms',
         subtitle: 'Certified Pre-Owned Standard',
         paragraphs: [
-          'Every certified MasterCar sold by Newcastle Volkswagen is under 5 years old with fewer than 120,000 km and completes a documented 80-point technical inspection.',
-          'Qualifying vehicles carry a 7-day / 1,000 km exchange guarantee, 12-month certification, and 24/7 VW Alert roadside assistance (0860 434 737).',
+          `Every certified MasterCar sold by ${activeDealership.name} (and our sister Asaf Auto Sales branches in Newcastle, Ermelo, and Vryheid) is under 5 years old with fewer than 120,000 km and completes a documented 80-point technical inspection.`,
+          `Qualifying vehicles carry a 7-day / 1,000 km exchange guarantee, 12-month certification, and 24/7 VW Alert roadside assistance (${activeDealership.roadsideAssist}).`,
         ],
       },
       terms: {
         title: 'Website & Pricing Terms',
-        subtitle: 'Asaf Auto Sales (Pty) Ltd · Authorised FSP No. 13411',
+        subtitle: `${activeDealership.legalEntity} · Authorised FSP No. ${activeDealership.fspNumber}`,
         paragraphs: [
           'All retail prices displayed on this site are recommended retail prices in South African Rand (ZAR) inclusive of VAT unless stated otherwise, E&OE. On-the-road, licensing, and registration fees are excluded.',
-          'Finance estimates are non-binding simulations subject to formal credit assessment and bank approval through Volkswagen Financial Services South Africa (Asaf Auto Sales (Pty) Ltd · Authorised FSP No. 13411).',
+          `Finance estimates are non-binding simulations subject to formal credit assessment and bank approval through Volkswagen Financial Services South Africa (${activeDealership.legalEntity} · Authorised FSP No. ${activeDealership.fspNumber}).`,
         ],
       },
     };
@@ -199,47 +220,61 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     { title: string; subtitle: string; prefix: string; ctaLabel: string }
   > = {
     'test-drive': {
-      title: 'Book a Test Drive',
-      subtitle:
-        'Mon–Fri: 09:00 – 15:00 · Sat: 09:00 – 11:00 · Sun: Closed (77 Allen Street, Newcastle).',
+      title: `Book a Test Drive — ${activeDealership.shortName}`,
+      subtitle: `${GROUP_CORPORATE_INFO.testDriveHoursSummary} (${activeDealership.physicalAddress}).`,
       prefix: 'TD',
       ctaLabel: 'Request Test Drive Slot',
     },
     finance: {
       title: 'Apply for Vehicle Finance',
-      subtitle: 'Our Newcastle F&I specialist will prepare your tailored bank offer.',
+      subtitle: `Our ${activeDealership.shortName} F&I specialist (FSP ${activeDealership.fspNumber}) will prepare your tailored bank offer.`,
       prefix: 'FIN',
       ctaLabel: 'Submit Finance Request',
     },
     service: {
       title: 'Book Approved Workshop Service',
-      subtitle:
-        'Open Mon–Fri: 07:30 – 17:00 · Sat: 08:00 – 12:00. Provide your vehicle & contact details for advisor confirmation.',
+      subtitle: `${activeDealership.serviceHours}. Provide your vehicle & contact details for advisor confirmation.`,
       prefix: 'SRV',
       ctaLabel: 'Request Service Booking',
     },
     parts: {
       title: 'Request Genuine Volkswagen Parts',
-      subtitle:
-        'Provide your VIN, registration, and contact details so our Parts Sales Executive can verify fitment and call you back.',
+      subtitle: `Provide your VIN, registration, and contact details so our ${activeDealership.shortName} Parts Executive can verify fitment.`,
       prefix: 'PRT',
       ctaLabel: 'Submit Parts Request',
     },
     'vehicle-inquiry': {
       title: 'Vehicle Enquiry & Valuation',
-      subtitle: 'Receive a detailed specification sheet, availability update, or trade-in offer.',
+      subtitle: `Receive a specification sheet, branch transfer options, or trade-in offer via ${activeDealership.name}.`,
       prefix: 'VEH',
       ctaLabel: 'Request Vehicle Quote',
     },
+    'event-rsvp': {
+      title: 'Dealership Event RSVP',
+      subtitle: modal.eventTitle || `Reserve your attendance spot at ${activeDealership.name}.`,
+      prefix: 'EVT',
+      ctaLabel: 'Confirm Event RSVP',
+    },
+    'competition-entry': {
+      title: 'Enter Dealership Competition',
+      subtitle:
+        modal.competitionTitle ||
+        `Submit your entry with ${activeDealership.name} (Asaf Auto Sales Group).`,
+      prefix: 'CMP',
+      ctaLabel: 'Submit Competition Entry',
+    },
     contact: {
-      title: 'Contact Newcastle Volkswagen',
-      subtitle: 'Connect directly with our dealership floor team.',
+      title: `Contact ${activeDealership.name}`,
+      subtitle: `Connect directly with our ${activeDealership.city} dealership floor team.`,
       prefix: 'ENQ',
       ctaLabel: 'Send Message',
     },
   };
 
   const activeMeta = metaByType[modal.type];
+  const matchedVehicle = activeVehicles.find((v) => v.title === selectedModel);
+  const effectiveHomeBranchId =
+    modal.homeDealershipId ?? matchedVehicle?.homeDealershipId ?? activeDealership.id;
 
   const clearFieldError = (field: keyof FieldErrorMap) => {
     if (fieldErrors[field]) {
@@ -313,8 +348,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       } else if (preferredDate < todayISO) {
         errors.preferredDate = 'Select today or a future date.';
       } else if (isSunday) {
-        errors.preferredDate =
-          'Workshop closed on Sundays. Open Mon–Fri (07:30–17:00) & Sat (08:00–12:00).';
+        errors.preferredDate = `Workshop closed on Sundays (${activeDealership.serviceHours}).`;
       }
     }
 
@@ -340,9 +374,35 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       return;
     }
 
+    const ref = generateBookingRef(activeMeta.prefix, activeDealership.id);
     setFieldErrors({});
     setErrorSummary('');
-    setSubmittedRef(generateBookingRef(activeMeta.prefix));
+    setSubmittedRef(ref);
+
+    void submitLead({
+      id: ref.toLowerCase(),
+      leadType: modal.type as LeadSubmissionType,
+      fullName,
+      phone,
+      email,
+      subject:
+        modal.type === 'event-rsvp'
+          ? modal.eventTitle || 'Dealership Event RSVP'
+          : modal.type === 'competition-entry'
+          ? modal.competitionTitle || 'Dealership Competition Entry'
+          : modal.type === 'service'
+          ? `${serviceType} — ${selectedModel}`
+          : `${activeMeta.title} — ${selectedModel}`,
+      details:
+        modal.type === 'test-drive'
+          ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
+          : modal.type === 'service'
+          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
+          : modal.type === 'parts'
+          ? `Reg: ${vehicleReg} | VIN: ${vinNumber} | Part Required: ${notes}`
+          : notes || modal.dealSummary || 'General enquiry submitted.',
+      homeDealershipId: effectiveHomeBranchId,
+    });
   };
 
   return (
@@ -361,12 +421,17 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 ? 'Service Request Logged — Advisor Callback Pending'
                 : modal.type === 'parts'
                 ? 'Parts Request Logged — Parts Executive Callback Pending'
+                : modal.type === 'event-rsvp'
+                ? 'Event RSVP Confirmed'
+                : modal.type === 'competition-entry'
+                ? 'Competition Entry Recorded'
                 : 'Request Confirmed'}
             </h3>
 
             {modal.type === 'test-drive' ? (
               <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. A Newcastle Volkswagen sales specialist will call you back on{' '}
+                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. A{' '}
+                {activeDealership.name} sales specialist will call you back on{' '}
                 <span className="font-mono text-[#091224]">{phone}</span> to confirm your{' '}
                 <span className="font-medium text-[#091224]">{selectedModel}</span> test drive for{' '}
                 <span className="font-mono text-[#091224]">{preferredDate}</span> at{' '}
@@ -374,19 +439,39 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
               </p>
             ) : modal.type === 'service' ? (
               <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. Our Service Reception has received your vehicle details for{' '}
+                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. Our{' '}
+                {activeDealership.name} Service Reception has received your vehicle details for{' '}
                 <span className="font-medium text-[#091224]">{selectedModel}</span> and will call you back on{' '}
                 <span className="font-mono text-[#091224]">{phone}</span> to confirm your workshop drop-off time on{' '}
                 <span className="font-mono text-[#091224]">{preferredDate}</span>.
               </p>
             ) : modal.type === 'parts' ? (
               <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. A Newcastle Volkswagen Parts Sales Executive will call you back on{' '}
+                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. A{' '}
+                {activeDealership.name} Parts Sales Executive will call you back on{' '}
                 <span className="font-mono text-[#091224]">{phone}</span> to confirm part availability, pricing, and any final specifications before placing your order.
+              </p>
+            ) : modal.type === 'event-rsvp' ? (
+              <p className="mt-2 text-sm leading-relaxed text-[#475569]">
+                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. Your spot for{' '}
+                <span className="font-medium text-[#091224]">
+                  {modal.eventTitle || `${activeDealership.name} Event`}
+                </span>{' '}
+                is reserved. Our dealership hospitality team will confirm details via{' '}
+                <span className="font-mono text-[#091224]">{phone}</span>.
+              </p>
+            ) : modal.type === 'competition-entry' ? (
+              <p className="mt-2 text-sm leading-relaxed text-[#475569]">
+                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. Your entry for{' '}
+                <span className="font-medium text-[#091224]">
+                  {modal.competitionTitle || `${activeDealership.name} Promotion`}
+                </span>{' '}
+                has been logged through {activeDealership.name}.
               </p>
             ) : (
               <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. Our Newcastle Volkswagen team has logged your request for{' '}
+                Thank you, <span className="font-medium text-[#091224]">{fullName}</span>. Our{' '}
+                {activeDealership.name} team has logged your request for{' '}
                 <span className="font-medium text-[#091224]">{selectedModel}</span> and will contact you on{' '}
                 <span className="font-mono text-[#091224]">{phone}</span>.
               </p>
@@ -397,6 +482,18 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
             <p>
               Booking Reference: <span className="font-semibold text-[#001E50]">{submittedRef}</span>
             </p>
+            <p>Submitted Branch: {activeDealership.name}</p>
+            {effectiveHomeBranchId && effectiveHomeBranchId !== activeDealership.id && (
+              <p>
+                Vehicle Held At: {dealershipsById[effectiveHomeBranchId]?.name ?? activeDealership.name}
+              </p>
+            )}
+            {modal.type === 'event-rsvp' && (
+              <p>Event: {modal.eventTitle || `${activeDealership.name} Event`}</p>
+            )}
+            {modal.type === 'competition-entry' && (
+              <p>Competition: {modal.competitionTitle}</p>
+            )}
             {modal.type === 'test-drive' && (
               <p>
                 Requested Slot: {preferredDate} · {preferredTime}
@@ -454,7 +551,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
 
           {modal.type === 'vehicle-inquiry' && modal.dealSummary && (
             <div className="rounded-xl border border-[#001E50]/20 bg-[#F8FAFC] px-4 py-3 text-xs text-[#091224]">
-              <p className="font-semibold text-[#001E50]">Selected Showroom Special</p>
+              <p className="font-semibold text-[#001E50]">Selected Showroom Offer</p>
               <p className="mt-0.5 text-[#334155]">{modal.dealSummary}</p>
             </div>
           )}
@@ -463,10 +560,10 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
             <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 text-xs text-[#334155] space-y-1">
               <div className="flex items-center gap-2 font-semibold text-[#001E50]">
                 <Clock className="h-3.5 w-3.5 shrink-0" />
-                <span>Test Drive Operating Hours</span>
+                <span>Test Drive Operating Hours ({activeDealership.shortName})</span>
               </div>
               <p className="font-mono text-[11px] text-[#475569]">
-                {DEALERSHIP_INFO.testDriveHoursSummary}
+                {GROUP_CORPORATE_INFO.testDriveHoursSummary}
               </p>
             </div>
           )}
@@ -549,24 +646,26 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
               )}
             </div>
 
-            <div>
-              <Label htmlFor="modal-model">Volkswagen Model</Label>
-              <Select
-                id="modal-model"
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-              >
-                {VEHICLE_MODELS.map((m) => (
-                  <option key={m.id} value={m.name}>
-                    {m.name}
-                  </option>
-                ))}
-                {modal.vehicleName &&
-                  !VEHICLE_MODELS.some((m) => m.name === modal.vehicleName) && (
-                    <option value={modal.vehicleName}>{modal.vehicleName}</option>
-                  )}
-              </Select>
-            </div>
+            {modal.type !== 'event-rsvp' && modal.type !== 'competition-entry' && (
+              <div>
+                <Label htmlFor="modal-model">Volkswagen Model</Label>
+                <Select
+                  id="modal-model"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                >
+                  {activeVehicles.map((m) => (
+                    <option key={m.id} value={m.title}>
+                      {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
+                    </option>
+                  ))}
+                  {modal.vehicleName &&
+                    !activeVehicles.some((m) => m.title === modal.vehicleName) && (
+                      <option value={modal.vehicleName}>{modal.vehicleName}</option>
+                    )}
+                </Select>
+              </div>
+            )}
           </div>
 
           {modal.type === 'test-drive' && (
@@ -727,7 +826,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 {(isSunday || fieldErrors.preferredDate) && (
                   <p className="mt-1 text-[11px] font-medium text-red-700">
                     {fieldErrors.preferredDate ||
-                      'Workshop closed on Sundays. Open Mon–Fri (07:30–17:00) & Sat (08:00–12:00).'}
+                      'Workshop closed on Sundays. Please choose Monday to Saturday.'}
                   </p>
                 )}
               </div>

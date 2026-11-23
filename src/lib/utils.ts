@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { DealershipId } from '../types/dealership';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -68,7 +69,50 @@ export function calculateMonthlyFinance({
   };
 }
 
-export function generateBookingRef(prefix: string): string {
+const BRANCH_REF_CODES: Record<DealershipId, string> = {
+  '1': 'NVW',
+  '2': 'EVW',
+  '3': 'VVW',
+};
+
+export function generateBookingRef(prefix: string, branchId: DealershipId = '1'): string {
   const num = Math.floor(100000 + Math.random() * 900000);
-  return `NVW-${prefix}-${num}`;
+  const code = BRANCH_REF_CODES[branchId] ?? 'VW';
+  return `${code}-${prefix}-${num}`;
+}
+
+export function toTelHref(phone: string): string {
+  const cleaned = phone.replace(/[^\d+]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('0') && cleaned.length === 10 && !cleaned.startsWith('0800') && !cleaned.startsWith('086')) {
+    return `tel:+27${cleaned.slice(1)}`;
+  }
+  return `tel:${cleaned}`;
+}
+
+export function toIntlPhoneDisplay(phone: string): string {
+  const trimmed = phone.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('0') && !trimmed.startsWith('086') && !trimmed.startsWith('0800')) {
+    return `+27 ${trimmed.slice(1)}`;
+  }
+  return trimmed;
+}
+
+export function toWhatsAppHref(whatsappNumber: string, branchName: string): string {
+  const digits = whatsappNumber.replace(/\D/g, '');
+  if (!digits) return '';
+  const intl = digits.startsWith('0') ? `27${digits.slice(1)}` : digits;
+  const msg = encodeURIComponent(
+    `Hello ${branchName}, I would like assistance with a vehicle enquiry.`
+  );
+  return `https://wa.me/${intl}?text=${msg}`;
+}
+
+export function toGoogleMapsSearchUrl(address: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
+export function toGoogleMapsEmbedUrl(address: string): string {
+  return `https://maps.google.com/maps?q=${encodeURIComponent(address)}&t=&z=15&ie=UTF8&iwloc=&output=embed`;
 }

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Menu, MessageCircle, Phone, X } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { DEALERSHIP_INFO } from '../data/dealership';
-import { AppRoute } from '../types/dealership';
+import { useDealership } from '../context/DealershipContext';
+import { cn, toTelHref, toWhatsAppHref } from '../lib/utils';
+import { AppRoute, DealershipId } from '../types/dealership';
 import { Button, Sheet } from './ui/shadcn';
 
 interface NavbarProps {
@@ -12,11 +12,11 @@ interface NavbarProps {
 }
 
 const NAV_LINKS: { label: string; route: AppRoute }[] = [
-  { label: 'New Vehicles', route: '/vehicles' },
+  { label: 'Showroom', route: '/vehicles' },
   { label: 'Specials', route: '/specials' },
   { label: 'Finance', route: '/finance' },
-  { label: 'Service', route: '/service' },
-  { label: 'Parts', route: '/parts' },
+  { label: 'Aftersales', route: '/aftersales' },
+  { label: 'News & Events', route: '/news-events' },
   { label: 'Contact', route: '/contact' },
 ];
 
@@ -41,6 +41,8 @@ export function VolkswagenEmblem({
 }
 
 export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProps) {
+  const { activeDealership, allDealerships, isBranchOverrideActive, switchPreviewBranch } =
+    useDealership();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -54,6 +56,8 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
   }, []);
 
   const solidHeader = scrolled || currentRoute !== '/';
+  const phoneHref = toTelHref(activeDealership.receptionNumber);
+  const whatsappHref = toWhatsAppHref(activeDealership.whatsappNumber, activeDealership.name);
 
   const handleLinkClick = (route: AppRoute) => {
     setMobileOpen(false);
@@ -70,7 +74,7 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
             : 'bg-linear-to-b from-[#001E50]/75 to-transparent text-white border-b border-white/10'
         )}
       >
-        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-8 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6 px-4 sm:px-6 lg:px-8">
           {/* Zone 1: Brand Wordmark */}
           <a
             href="/"
@@ -82,17 +86,21 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
           >
             <VolkswagenEmblem inverted={!solidHeader} />
             <span className="font-display text-base sm:text-lg font-semibold tracking-tight">
-              Newcastle Volkswagen
+              {activeDealership.name}
             </span>
           </a>
 
           {/* Zone 2: Primary Single-Line Navigation */}
           <nav
             aria-label="Primary dealership navigation"
-            className="hidden lg:flex items-center gap-7"
+            className="hidden lg:flex items-center gap-6"
           >
             {NAV_LINKS.map((link) => {
-              const isActive = currentRoute === link.route;
+              const isActive =
+                currentRoute === link.route ||
+                (link.route === '/aftersales' &&
+                  (currentRoute === '/service' || currentRoute === '/parts')) ||
+                (link.route === '/news-events' && currentRoute === '/news');
               return (
                 <a
                   key={link.route}
@@ -117,8 +125,28 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
             })}
           </nav>
 
-          {/* Zone 3: Single Primary Action + Mobile Trigger */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Zone 3: Optional Localhost/Staging Branch Preview Switcher + Primary Action */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            {isBranchOverrideActive && (
+              <select
+                aria-label="Switch testing dealership branch"
+                value={activeDealership.id}
+                onChange={(e) => switchPreviewBranch(e.target.value as DealershipId)}
+                className={cn(
+                  'hidden md:block h-8 rounded-md border px-2 text-xs font-medium cursor-pointer focus-visible:outline-none',
+                  solidHeader
+                    ? 'border-[#CBD5E1] bg-[#F8FAFC] text-[#001E50]'
+                    : 'border-white/30 bg-white/15 text-white backdrop-blur-md'
+                )}
+              >
+                {allDealerships.map((b) => (
+                  <option key={b.id} value={b.id} className="text-[#091224] bg-white">
+                    Branch {b.id}: {b.shortName}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <Button
               variant={solidHeader ? 'primary' : 'glass'}
               size="sm"
@@ -151,7 +179,7 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
           <div className="flex items-center gap-2.5 text-[#001E50]">
             <VolkswagenEmblem className="h-7 w-7" />
             <span className="font-display text-base font-semibold tracking-tight">
-              Newcastle Volkswagen
+              {activeDealership.name}
             </span>
           </div>
           <button
@@ -206,18 +234,6 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
             </li>
             <li>
               <a
-                href="/news"
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleLinkClick('/news');
-                }}
-                className="flex h-11 items-center rounded-lg px-3 text-base font-medium text-[#091224] transition-colors hover:bg-[#F8FAFC] hover:text-[#001E50]"
-              >
-                Motoring News
-              </a>
-            </li>
-            <li>
-              <a
                 href="/sitemap"
                 onClick={(e) => {
                   e.preventDefault();
@@ -226,6 +242,18 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
                 className="flex h-11 items-center rounded-lg px-3 text-sm font-medium text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#001E50]"
               >
                 Sitemap
+              </a>
+            </li>
+            <li>
+              <a
+                href="/admin"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleLinkClick('/admin');
+                }}
+                className="flex h-11 items-center rounded-lg px-3 text-sm font-medium text-[#00437A] transition-colors hover:bg-[#F8FAFC] hover:text-[#001E50]"
+              >
+                Dealership Admin CMS
               </a>
             </li>
           </ul>
@@ -243,23 +271,25 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
           >
             Book Test Drive
           </Button>
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className={cn('grid gap-2.5', whatsappHref ? 'grid-cols-2' : 'grid-cols-1')}>
             <a
-              href={DEALERSHIP_INFO.phoneHref}
+              href={phoneHref}
               className="flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[#CBD5E1] bg-white text-xs font-semibold text-[#001E50]"
             >
               <Phone className="h-3.5 w-3.5" />
-              <span>{DEALERSHIP_INFO.phone}</span>
+              <span>{activeDealership.receptionNumber}</span>
             </a>
-            <a
-              href={DEALERSHIP_INFO.whatsappHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[#CBD5E1] bg-white text-xs font-semibold text-[#001E50]"
-            >
-              <MessageCircle className="h-3.5 w-3.5" />
-              <span>WhatsApp</span>
-            </a>
+            {whatsappHref && (
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[#CBD5E1] bg-white text-xs font-semibold text-[#001E50]"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                <span>WhatsApp</span>
+              </a>
+            )}
           </div>
         </div>
       </Sheet>

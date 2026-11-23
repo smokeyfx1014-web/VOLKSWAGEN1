@@ -1,5 +1,31 @@
 export type AssetAspectRatio = '16:9' | '4:3' | '3:2' | '16:10' | '1:1';
 
+export type DealershipId = '1' | '2' | '3';
+
+export interface DealershipRecord {
+  id: DealershipId;
+  name: string;
+  shortName: string;
+  legalEntity: string;
+  fspNumber: string;
+  domain: string;
+  receptionNumber: string;
+  whatsappNumber: string;
+  email: string;
+  physicalAddress: string;
+  postalAddress: string;
+  city: string;
+  province: string;
+  salesHours: string;
+  serviceHours: string;
+  roadsideAssist: string;
+  vwFinancialServices: string;
+  volkswagensure: string;
+  mapEmbedUrl: string;
+  updatedAt?: unknown;
+  updatedBy?: string;
+}
+
 export interface AssetSlotSpec {
   slotId: string;
   targetPath: string;
@@ -25,42 +51,8 @@ export interface HeroSlide {
 }
 
 export type VehicleCategory = 'All' | 'Hatchbacks & Sedans' | 'SUVs' | 'Commercial';
-export type StockCondition = 'All' | 'New' | 'MasterCars' | 'Demo';
-
-export interface VehicleModel {
-  id: string;
-  name: string;
-  category: Exclude<VehicleCategory, 'All'>;
-  condition: Exclude<StockCondition, 'All'>;
-  variant: string;
-  year: number;
-  mileageKm: number;
-  priceFrom: number;
-  monthlyFrom: number;
-  powerKw: string;
-  transmission: string;
-  fuelEconomy: string;
-  inStock: boolean;
-  isSpecial: boolean;
-  specialOfferSummary?: string;
-  specialValidUntil?: string;
-  asset: AssetSlotSpec;
-}
-
-export interface MasterCarListing {
-  id: string;
-  title: string;
-  year: number;
-  mileageKm: number;
-  price: number;
-  monthlyEstimate: number;
-  transmission: string;
-  fuelType: string;
-  colour: string;
-  bodyType: 'Hatchback' | 'SUV' | 'Commercial';
-  condition: 'MasterCars' | 'Demo';
-  asset: AssetSlotSpec;
-}
+export type StockCondition = 'All' | 'New' | 'Used' | 'MasterCars';
+export type VehicleStatus = 'available' | 'reserved' | 'sold';
 
 export interface MotoringArticle {
   id: string;
@@ -74,20 +66,110 @@ export interface MotoringArticle {
   asset: AssetSlotSpec;
 }
 
+/** Master Group Stock Vehicle stored in /vehicles/{vehicleId} */
+export interface CmsVehicle {
+  id: string;
+  title: string;
+  make: string;
+  model: string;
+  year: number;
+  price: number;
+  monthlyFrom: number;
+  mileage: number;
+  transmission: string;
+  fuelType: string;
+  category: 'New' | 'Used' | 'MasterCars';
+  bodyStyle: 'Hatchbacks & Sedans' | 'SUVs' | 'Commercial';
+  powerKw: string;
+  fuelEconomy: string;
+  colour: string;
+  images: string[];
+  homeDealershipId: DealershipId;
+  status: VehicleStatus;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  updatedBy: string;
+}
+
+export type PromotionType = 'special' | 'event' | 'competition';
+export type PromotionScope = 'MASTER' | 'BRANCH';
+
+/** Scoped Special, Event, or Competition stored in /promotions/{promotionId} */
+export interface CmsPromotion {
+  id: string;
+  title: string;
+  type: PromotionType;
+  description: string;
+  imageUrl: string;
+  validUntil: string; // YYYY-MM-DD
+  scope: PromotionScope;
+  dealershipId: DealershipId | null;
+  active: boolean;
+  vehicleName: string;
+  offerPrice: number;
+  monthlyFrom: number;
+  eventTime: string;
+  location: string;
+  updatedAt?: unknown;
+  updatedBy: string;
+}
+
+export interface CmsNewsArticle {
+  id: string;
+  title: string;
+  category: string;
+  publishedDate: string;
+  readTime: string;
+  excerpt: string;
+  bodyText: string;
+  featured: boolean;
+  archived: boolean;
+  imageSrc: string;
+  updatedAt?: unknown;
+  updatedBy: string;
+}
+
+export type LeadSubmissionType =
+  | 'test-drive'
+  | 'service'
+  | 'parts'
+  | 'finance'
+  | 'vehicle-inquiry'
+  | 'contact'
+  | 'event-rsvp'
+  | 'competition-entry';
+
+export interface CmsLeadSubmission {
+  id: string;
+  leadType: LeadSubmissionType;
+  fullName: string;
+  phone: string;
+  email: string;
+  subject: string;
+  details: string;
+  submittedAtDealershipId: DealershipId;
+  homeDealershipId: DealershipId | null;
+  status: 'new' | 'contacted' | 'archived';
+  createdAt?: unknown;
+}
+
 export type AppRoute =
   | '/'
   | '/vehicles'
   | '/specials'
   | '/test-drive'
+  | '/aftersales'
   | '/service'
   | '/parts'
   | '/finance'
   | '/vw-alert'
+  | '/news-events'
   | '/news'
   | '/contact'
   | '/privacy-policy'
   | '/terms'
-  | '/sitemap';
+  | '/sitemap'
+  | '/admin';
 
 export type ModalWorkflowType =
   | 'test-drive'
@@ -95,6 +177,8 @@ export type ModalWorkflowType =
   | 'service'
   | 'parts'
   | 'vehicle-inquiry'
+  | 'event-rsvp'
+  | 'competition-entry'
   | 'contact'
   | 'news-reader'
   | 'legal'
@@ -104,7 +188,10 @@ export interface ModalContextState {
   type: ModalWorkflowType;
   vehicleName?: string;
   vehiclePrice?: number;
+  homeDealershipId?: DealershipId | null;
   dealSummary?: string;
+  eventTitle?: string;
+  competitionTitle?: string;
   article?: MotoringArticle;
   legalDoc?: 'popia' | 'paia' | 'terms' | 'mastercars';
   financePreset?: {

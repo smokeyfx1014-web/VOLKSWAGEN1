@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Do not rewrite index.html itself
+  RewriteRule ^index\.html$ - [L]
+
+  # Serve existing files and directories directly
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+  # Route all SPA virtual paths (/vehicles, /aftersales, /admin, etc.) to index.html
+  RewriteRule ^ index.html [L]
+</IfModule>

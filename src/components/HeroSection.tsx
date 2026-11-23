@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ArrowRight, ChevronLeft, ChevronRight } from 'lucide-react';
-import { HERO_SLIDES } from '../data/dealershipData';
+import { useDealership } from '../context/DealershipContext';
+import { getHeroSlidesForBranch } from '../data/dealership';
 import { DealershipImage } from './DealershipImage';
 import { Button } from './ui/shadcn';
 
@@ -11,6 +12,9 @@ interface HeroSectionProps {
 }
 
 export function HeroSection({ onExploreModels, onBookTestDrive }: HeroSectionProps) {
+  const { activeDealership } = useDealership();
+  const slides = useMemo(() => getHeroSlidesForBranch(activeDealership), [activeDealership]);
+
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const shouldReduceMotion = useReducedMotion();
@@ -18,19 +22,19 @@ export function HeroSection({ onExploreModels, onBookTestDrive }: HeroSectionPro
   useEffect(() => {
     if (paused) return;
     const timer = window.setInterval(() => {
-      setActiveIndex((prev) => (prev + 1) % HERO_SLIDES.length);
+      setActiveIndex((prev) => (prev + 1) % slides.length);
     }, 6800);
     return () => window.clearInterval(timer);
-  }, [paused]);
+  }, [paused, slides.length]);
 
-  const currentSlide = HERO_SLIDES[activeIndex];
+  const currentSlide = slides[activeIndex] ?? slides[0];
 
   const handlePrev = () => {
-    setActiveIndex((prev) => (prev - 1 + HERO_SLIDES.length) % HERO_SLIDES.length);
+    setActiveIndex((prev) => (prev - 1 + slides.length) % slides.length);
   };
 
   const handleNext = () => {
-    setActiveIndex((prev) => (prev + 1) % HERO_SLIDES.length);
+    setActiveIndex((prev) => (prev + 1) % slides.length);
   };
 
   const handleSecondaryAction = () => {
@@ -39,13 +43,17 @@ export function HeroSection({ onExploreModels, onBookTestDrive }: HeroSectionPro
       return;
     }
     const target = document.querySelector(currentSlide.secondaryCtaTarget);
-    target?.scrollIntoView({ behavior: 'smooth' });
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      onExploreModels();
+    }
   };
 
   return (
     <section
       id="hero"
-      aria-label="Newcastle Volkswagen Featured Showcase"
+      aria-label={`${activeDealership.name} Featured Showcase`}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       className="relative min-h-[620px] h-[88vh] max-h-[860px] w-full overflow-hidden bg-[#001E50]"
@@ -108,11 +116,7 @@ export function HeroSection({ onExploreModels, onBookTestDrive }: HeroSectionPro
                   <span>{currentSlide.primaryCtaLabel}</span>
                   <ArrowRight className="h-4 w-4" />
                 </Button>
-                <Button
-                  variant="glass"
-                  size="lg"
-                  onClick={handleSecondaryAction}
-                >
+                <Button variant="glass" size="lg" onClick={handleSecondaryAction}>
                   {currentSlide.secondaryCtaLabel}
                 </Button>
               </div>
@@ -123,7 +127,7 @@ export function HeroSection({ onExploreModels, onBookTestDrive }: HeroSectionPro
           <div className="flex items-center justify-between gap-6 rounded-xl border border-white/15 bg-[#061229]/65 px-5 py-3.5 backdrop-blur-md text-white lg:min-w-[300px]">
             <div>
               <p className="text-[11px] font-mono uppercase tracking-wider text-white/65">
-                Slide 0{activeIndex + 1} / 0{HERO_SLIDES.length}
+                Slide 0{activeIndex + 1} / 0{slides.length}
               </p>
               <p className="mt-0.5 text-sm font-medium text-white tabular-nums">
                 {currentSlide.startingPrice}
@@ -153,7 +157,7 @@ export function HeroSection({ onExploreModels, onBookTestDrive }: HeroSectionPro
 
         {/* Minimalist Slide Progress Bars */}
         <div className="mt-5 flex items-center gap-2" role="tablist" aria-label="Hero slide selection">
-          {HERO_SLIDES.map((slide, idx) => (
+          {slides.map((slide, idx) => (
             <button
               key={slide.id}
               type="button"

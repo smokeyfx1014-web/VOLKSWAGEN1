@@ -7,8 +7,9 @@ import {
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
-import { CONTACT_CARD_ASSETS, DEALERSHIP_INFO } from '../data/dealership';
-import { generateBookingRef } from '../lib/utils';
+import { useDealership } from '../context/DealershipContext';
+import { CONTACT_CARD_ASSETS, GROUP_CORPORATE_INFO } from '../data/dealership';
+import { generateBookingRef, toTelHref } from '../lib/utils';
 import { AppRoute } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
 import { FadeUp, SectionHeader } from './MotionPrimitives';
@@ -19,6 +20,8 @@ interface VwAlertBannerProps {
 }
 
 export function VwAlertEmergencyBar({ onOpenVwAlert }: VwAlertBannerProps) {
+  const { activeDealership } = useDealership();
+
   return (
     <section
       aria-label="24/7 Volkswagen Roadside Assistance"
@@ -26,22 +29,25 @@ export function VwAlertEmergencyBar({ onOpenVwAlert }: VwAlertBannerProps) {
     >
       <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
         <div className="flex items-start sm:items-center gap-3">
-          <ShieldAlert className="h-5 w-5 shrink-0 text-white/90 mt-0.5 sm:mt-0" aria-hidden="true" />
+          <ShieldAlert
+            className="h-5 w-5 shrink-0 text-white/90 mt-0.5 sm:mt-0"
+            aria-hidden="true"
+          />
           <p className="text-xs sm:text-sm text-white/90">
             <span className="font-semibold text-white">24/7 Volkswagen Alert Roadside Assist:</span>{' '}
-            National breakdown & customer care on{' '}
+            National breakdown &amp; customer care on{' '}
             <a
-              href="tel:0860434737"
+              href={toTelHref(activeDealership.roadsideAssist)}
               className="font-mono font-semibold text-white underline underline-offset-4 tabular-nums"
             >
-              {DEALERSHIP_INFO.vwAlert}
+              {activeDealership.roadsideAssist}
             </a>{' '}
             or{' '}
             <a
-              href="tel:0800111992"
+              href={toTelHref(GROUP_CORPORATE_INFO.vwRoadsideTollFree)}
               className="font-mono font-semibold text-white underline underline-offset-4 tabular-nums"
             >
-              {DEALERSHIP_INFO.vwRoadsideTollFree}
+              {GROUP_CORPORATE_INFO.vwRoadsideTollFree}
             </a>
           </p>
         </div>
@@ -51,7 +57,7 @@ export function VwAlertEmergencyBar({ onOpenVwAlert }: VwAlertBannerProps) {
           onClick={onOpenVwAlert}
           className="inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-white hover:text-white/80 whitespace-nowrap shrink-0 cursor-pointer"
         >
-          <span>Recall Check & VW Alert Details</span>
+          <span>Recall Check &amp; VW Alert Details</span>
           <ArrowRight className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -65,6 +71,7 @@ interface VwAlertPageProps {
 }
 
 export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
+  const { activeDealership } = useDealership();
   const [vin, setVin] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [error, setError] = useState('');
@@ -74,7 +81,9 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
     e.preventDefault();
     const cleaned = vin.trim().toUpperCase();
     if (cleaned.length < 11) {
-      setError('Please enter at least 11 characters (or your full 17-digit VIN) to run a safety recall check.');
+      setError(
+        'Please enter at least 11 characters (or your full 17-digit VIN) to run a safety recall check.'
+      );
       return;
     }
     if (!contactPhone.trim()) {
@@ -82,7 +91,7 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
       return;
     }
     setError('');
-    setCheckRef(generateBookingRef('VWA'));
+    setCheckRef(generateBookingRef('VWA', activeDealership.id));
   };
 
   return (
@@ -91,7 +100,7 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
         <SectionHeader
           kicker="Volkswagen Alert · Roadside & Safety"
           title="24/7 Emergency Roadside Assistance & Safety Recall Verification"
-          description="Whether you need urgent breakdown recovery anywhere in Southern Africa or want to verify active Volkswagen factory safety campaigns by VIN, our team is ready."
+          description={`Whether you need urgent breakdown recovery anywhere in Southern Africa or want to verify active Volkswagen factory safety campaigns by VIN at ${activeDealership.name}, our team is ready.`}
         />
 
         <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-12">
@@ -105,34 +114,34 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
               />
               <div className="p-6 sm:p-8 space-y-5">
                 <h3 className="font-display text-xl font-semibold text-[#091224]">
-                  Direct Emergency & Customer Care Lines
+                  Direct Emergency, Finance &amp; Insurance Lines
                 </h3>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <a
-                    href="tel:0860434737"
+                    href={toTelHref(activeDealership.roadsideAssist)}
                     className="rounded-xl border border-[#E2E8F0] bg-white p-4 hover:border-[#001E50] transition-colors"
                   >
                     <span className="block text-[11px] text-[#64748B]">VW Alert (SA)</span>
                     <span className="mt-1 block font-mono text-base font-semibold text-[#001E50] tabular-nums">
-                      {DEALERSHIP_INFO.vwAlert}
+                      {activeDealership.roadsideAssist}
                     </span>
                   </a>
                   <a
-                    href="tel:0800111992"
+                    href={toTelHref(activeDealership.vwFinancialServices)}
                     className="rounded-xl border border-[#E2E8F0] bg-white p-4 hover:border-[#001E50] transition-colors"
                   >
-                    <span className="block text-[11px] text-[#64748B]">Toll-Free Assist</span>
+                    <span className="block text-[11px] text-[#64748B]">VW Financial Services</span>
                     <span className="mt-1 block font-mono text-base font-semibold text-[#001E50] tabular-nums">
-                      {DEALERSHIP_INFO.vwRoadsideTollFree}
+                      {activeDealership.vwFinancialServices}
                     </span>
                   </a>
                   <a
-                    href="tel:+27419945615"
+                    href={toTelHref(activeDealership.volkswagensure)}
                     className="rounded-xl border border-[#E2E8F0] bg-white p-4 hover:border-[#001E50] transition-colors"
                   >
-                    <span className="block text-[11px] text-[#64748B]">Cross-Border</span>
-                    <span className="mt-1 block font-mono text-sm font-semibold text-[#001E50] tabular-nums">
-                      {DEALERSHIP_INFO.vwRoadsideCrossBorder}
+                    <span className="block text-[11px] text-[#64748B]">VolkswagenSure</span>
+                    <span className="mt-1 block font-mono text-base font-semibold text-[#001E50] tabular-nums">
+                      {activeDealership.volkswagensure}
                     </span>
                   </a>
                 </div>
@@ -141,7 +150,7 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
                   <li className="flex items-start gap-2.5">
                     <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#00437A]" />
                     <span>
-                      24-hour mechanical breakdown recovery, flat tyre assistance, fuel delivery, and towing across South Africa, Namibia, Botswana, Lesotho, and Eswatini.
+                      24-hour mechanical breakdown recovery, flat tyre assistance, fuel delivery, and towing across South Africa and cross-border ({GROUP_CORPORATE_INFO.vwRoadsideCrossBorder}).
                     </span>
                   </li>
                   <li className="flex items-start gap-2.5">
@@ -156,7 +165,9 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
                   <Button onClick={onBookService}>Book Workshop Inspection</Button>
                   <Button variant="outline" onClick={() => onNavigate('/contact')}>
                     <Phone className="h-4 w-4" />
-                    <span>Dealership Switchboard ({DEALERSHIP_INFO.phone})</span>
+                    <span>
+                      {activeDealership.shortName} ({activeDealership.receptionNumber})
+                    </span>
                   </Button>
                 </div>
               </div>
@@ -169,14 +180,14 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
               <div className="flex items-center gap-2.5 text-[#001E50]">
                 <AlertTriangle className="h-5 w-5" aria-hidden="true" />
                 <span className="text-xs font-semibold tracking-wider uppercase">
-                  Safety Campaign & Recall Lookup
+                  Safety Campaign &amp; Recall Lookup
                 </span>
               </div>
               <h3 className="mt-3 font-display text-2xl font-semibold text-[#091224]">
                 Check Your Vehicle by VIN Number
               </h3>
               <p className="mt-2 text-sm leading-relaxed text-[#475569]">
-                Enter your 17-character Vehicle Identification Number (found on your licence disc or windscreen base) to check whether your Volkswagen has any open factory recall or software campaign at Newcastle Volkswagen.
+                Enter your 17-character Vehicle Identification Number (found on your licence disc or windscreen base) to check whether your Volkswagen has any open factory recall or software campaign at {activeDealership.name}.
               </p>
 
               {checkRef ? (
@@ -188,8 +199,10 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
                     </h4>
                   </div>
                   <p className="text-sm text-[#475569] leading-relaxed">
-                    Our Newcastle Volkswagen Service Reception is cross-checking VIN{' '}
-                    <span className="font-mono font-semibold text-[#091224]">{vin.toUpperCase()}</span>{' '}
+                    Our {activeDealership.name} Service Reception is cross-checking VIN{' '}
+                    <span className="font-mono font-semibold text-[#091224]">
+                      {vin.toUpperCase()}
+                    </span>{' '}
                     against Volkswagen Group Africa’s live campaign register and will contact you on{' '}
                     <span className="font-mono text-[#091224]">{contactPhone}</span> if any complimentary safety recall work is required.
                   </p>

@@ -1,11 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, ShieldCheck } from 'lucide-react';
-import {
-  DEALERSHIP_INFO,
-  FINANCE_SECTION_ASSET,
-  VEHICLE_MODELS,
-} from '../data/dealership';
+import { useDealership } from '../context/DealershipContext';
+import { useDealershipData } from '../context/DealershipDataContext';
+import { FINANCE_SECTION_ASSET } from '../data/dealership';
 import { calculateMonthlyFinance, formatZAR } from '../lib/utils';
+import { DealershipId } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
 import { FadeUp } from './MotionPrimitives';
 import { Button, Label, Select } from './ui/shadcn';
@@ -14,6 +13,7 @@ interface FinanceSectionProps {
   onApplyFinance: (preset: {
     vehicleName: string;
     vehiclePrice: number;
+    homeDealershipId?: DealershipId | null;
     depositPercent: number;
     balloonPercent: number;
     termMonths: number;
@@ -22,21 +22,33 @@ interface FinanceSectionProps {
 }
 
 export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
-  const [selectedVehicleId, setSelectedVehicleId] = useState(VEHICLE_MODELS[0].id);
-  const selectedVehicle =
-    VEHICLE_MODELS.find((v) => v.id === selectedVehicleId) ?? VEHICLE_MODELS[0];
+  const { activeDealership, dealershipsById } = useDealership();
+  const { activeVehicles } = useDealershipData();
 
-  const [vehiclePrice, setVehiclePrice] = useState(selectedVehicle.priceFrom);
+  const [selectedVehicleId, setSelectedVehicleId] = useState(
+    activeVehicles[0]?.id ?? 'polo-vivo'
+  );
+  const selectedVehicle =
+    activeVehicles.find((v) => v.id === selectedVehicleId) ?? activeVehicles[0];
+
+  const [vehiclePrice, setVehiclePrice] = useState(selectedVehicle?.price ?? 271900);
   const [depositPercent, setDepositPercent] = useState(10);
   const [balloonPercent, setBalloonPercent] = useState(30);
   const [termMonths, setTermMonths] = useState(60);
   const [interestRate, setInterestRate] = useState(11.75);
 
+  useEffect(() => {
+    if (selectedVehicle && !activeVehicles.some((v) => v.id === selectedVehicleId)) {
+      setSelectedVehicleId(selectedVehicle.id);
+      setVehiclePrice(selectedVehicle.price);
+    }
+  }, [activeVehicles, selectedVehicle, selectedVehicleId]);
+
   const handleModelChange = (id: string) => {
     setSelectedVehicleId(id);
-    const match = VEHICLE_MODELS.find((v) => v.id === id);
+    const match = activeVehicles.find((v) => v.id === id);
     if (match) {
-      setVehiclePrice(match.priceFrom);
+      setVehiclePrice(match.price);
     }
   };
 
@@ -64,7 +76,7 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
           <FadeUp className="flex flex-col justify-between lg:col-span-5">
             <div>
               <p className="text-xs font-semibold tracking-wider text-[#00437A] uppercase">
-                Volkswagen Financial Services
+                Volkswagen Financial Services · {activeDealership.vwFinancialServices}
               </p>
               <h2
                 id="finance-heading"
@@ -73,7 +85,7 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                 Tailored finance built around your budget
               </h2>
               <p className="mt-4 text-base leading-relaxed text-[#475569]">
-                Our dedicated Finance & Insurance specialists at Newcastle Volkswagen structure transparent instalment plans, Guaranteed Future Value (GFV) options, and seamless trade-in settlements.
+                Our dedicated Finance &amp; Insurance specialists at {activeDealership.name} structure transparent instalment plans, Guaranteed Future Value (GFV) options, and seamless trade-in settlements across our group inventory.
               </p>
 
               <ul className="mt-6 space-y-3 text-sm text-[#334155]">
@@ -87,7 +99,9 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                 </li>
                 <li className="flex items-start gap-2.5">
                   <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#00437A]" />
-                  <span>Comprehensive VW Service Plans, Warranties & Tyre Guard integration</span>
+                  <span>
+                    VolkswagenSure ({activeDealership.volkswagensure}) &amp; Service Plan integration
+                  </span>
                 </li>
               </ul>
             </div>
@@ -95,7 +109,7 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
             <div className="mt-8 overflow-hidden rounded-xl border border-[#E2E8F0]">
               <DealershipImage
                 asset={FINANCE_SECTION_ASSET}
-                alt="Newcastle Volkswagen Finance & Handover Lounge"
+                alt={`${activeDealership.name} Finance & Handover Lounge`}
               />
             </div>
           </FadeUp>
@@ -124,17 +138,20 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
 
                 <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div>
-                    <Label htmlFor="finance-model-select">Select Volkswagen Model</Label>
+                    <Label htmlFor="finance-model-select">Select Group Vehicle</Label>
                     <Select
                       id="finance-model-select"
-                      value={selectedVehicleId}
+                      value={selectedVehicle?.id ?? ''}
                       onChange={(e) => handleModelChange(e.target.value)}
                     >
-                      {VEHICLE_MODELS.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.name} ({formatZAR(model.priceFrom)})
-                        </option>
-                      ))}
+                      {activeVehicles.map((model) => {
+                        const branch = dealershipsById[model.homeDealershipId];
+                        return (
+                          <option key={model.id} value={model.id}>
+                            {model.title} ({formatZAR(model.price)} · {branch?.shortName})
+                          </option>
+                        );
+                      })}
                     </Select>
                   </div>
 
@@ -258,7 +275,7 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
                     </dd>
                   </div>
                   <div className="col-span-2 sm:col-span-1">
-                    <dt className="text-[#64748B]">Term & Rate</dt>
+                    <dt className="text-[#64748B]">Term &amp; Rate</dt>
                     <dd className="mt-1 font-mono text-sm font-semibold text-[#091224] tabular-nums">
                       {termMonths} mo · {interestRate.toFixed(2)}%
                     </dd>
@@ -267,14 +284,15 @@ export function FinanceSection({ onApplyFinance }: FinanceSectionProps) {
 
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <p className="text-xs text-[#64748B] max-w-md leading-relaxed">
-                    Non-binding loan simulator; excludes on-the-road & documentation fees. {DEALERSHIP_INFO.legalEntity} t/a {DEALERSHIP_INFO.name} is an Authorised Financial Services Provider (FSP No. {DEALERSHIP_INFO.fspNumber}).
+                    Non-binding loan simulator; excludes on-the-road &amp; documentation fees. {activeDealership.legalEntity} t/a {activeDealership.name} is an Authorised Financial Services Provider (FSP No. {activeDealership.fspNumber}).
                   </p>
                   <Button
                     size="lg"
                     onClick={() =>
                       onApplyFinance({
-                        vehicleName: selectedVehicle.name,
+                        vehicleName: selectedVehicle?.title ?? 'Volkswagen Vehicle',
                         vehiclePrice,
+                        homeDealershipId: selectedVehicle?.homeDealershipId ?? activeDealership.id,
                         depositPercent,
                         balloonPercent,
                         termMonths,
