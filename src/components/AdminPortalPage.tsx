@@ -22,12 +22,14 @@ import {
   LogOut,
   Mail,
   MapPin,
+  MessageCircle,
   Newspaper,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
+  Send,
   Shield,
   ShieldAlert,
   Sparkles,
@@ -39,7 +41,7 @@ import {
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { DEALERSHIP_IMAGE_LIBRARY, GROUP_CORPORATE_INFO } from '../data/dealership';
-import { cn, formatZAR, toGoogleMapsEmbedUrl } from '../lib/utils';
+import { cn, formatZAR, toGoogleMapsEmbedUrl, toWhatsAppMessageHref } from '../lib/utils';
 import {
   AutoTraderSyncReport,
   CmsLeadSubmission,
@@ -52,6 +54,7 @@ import {
   PromotionType,
   StaffRole,
   StaffUserProfile,
+  StaffWelcomeEmailResult,
   VehicleStatus,
 } from '../types/dealership';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
@@ -242,6 +245,7 @@ export function AdminPortalPage() {
     createStaffUser,
     updateStaffUser,
     removeStaffUser,
+    sendStaffWelcomeEmail,
   } = useDealershipData();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
@@ -282,7 +286,9 @@ export function AdminPortalPage() {
   const [createdStaffReceipt, setCreatedStaffReceipt] = useState<{
     profile: StaffUserProfile;
     temporaryPassword: string;
+    welcomeStatus: StaffWelcomeEmailResult | null;
   } | null>(null);
+  const [resendingWelcome, setResendingWelcome] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const [editingStaffUser, setEditingStaffUser] = useState<StaffUserProfile | null>(null);
@@ -353,6 +359,43 @@ export function AdminPortalPage() {
   };
 
   const allocatedBranch = allocatedBranchId ? dealershipsById[allocatedBranchId] : null;
+
+  const buildStaffWelcomeMessage = (
+    profile: StaffUserProfile,
+    temporaryPassword: string
+  ): string => {
+    const branchInfo = profile.allocatedDealershipId
+      ? dealershipsById[profile.allocatedDealershipId]
+      : null;
+    const branchLabel = branchInfo?.name ?? 'All Asaf Auto Sales VW Dealerships';
+    const roleLabel =
+      profile.role === 'admin'
+        ? 'Administrator (Full Group Access)'
+        : `Car Sales Agent — ${branchLabel}`;
+    const permissionsNote =
+      profile.role === 'admin'
+        ? 'Manage staff users, sync AutoTrader inventory, edit branch settings, publish campaigns, and review customer leads across all branches.'
+        : `Add and manage vehicles, monthly specials, and dealership events for ${branchLabel}.`;
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const portalUrl = `${origin}/admin${
+      profile.allocatedDealershipId ? `?branch=${profile.allocatedDealershipId}` : ''
+    }`;
+
+    return [
+      `Hello ${profile.fullName},`,
+      '',
+      `Welcome to ${branchLabel} (${GROUP_CORPORATE_INFO.legalEntity}). Your dealership staff portal account is now active.`,
+      '',
+      `Role: ${roleLabel}`,
+      `Permissions: ${permissionsNote}`,
+      `Portal Sign-In: ${portalUrl}`,
+      `Username (Work Email): ${profile.email}`,
+      `Temporary Password: ${temporaryPassword}`,
+      '',
+      'First-Time Login Step:',
+      'Please sign in with the credentials above and create your own personal password when prompted.',
+    ].join('\n');
+  };
 
   const scopedVehicles = useMemo(() => {
     if (isSalesAgent && allocatedBranchId) {
@@ -3213,91 +3256,190 @@ export function AdminPortalPage() {
           maxWidthClass="max-w-xl"
         >
           {createdStaffReceipt ? (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-950 space-y-2">
-                <p className="font-semibold text-sm">
-                  {createdStaffReceipt.profile.fullName} added as{' '}
-                  {createdStaffReceipt.profile.role === 'admin'
-                    ? 'Administrator'
-                    : 'Car Sales Agent'}
-                </p>
-                <p>
-                  <strong>Allocated Dealership:</strong>{' '}
-                  {createdStaffReceipt.profile.allocatedDealershipId
-                    ? dealershipsById[createdStaffReceipt.profile.allocatedDealershipId]?.name
-                    : 'All Group Dealerships'}
-                </p>
-              </div>
+            (() => {
+              const welcomeMessage = buildStaffWelcomeMessage(
+                createdStaffReceipt.profile,
+                createdStaffReceipt.temporaryPassword
+              );
+              const branchLabel = createdStaffReceipt.profile.allocatedDealershipId
+                ? dealershipsById[createdStaffReceipt.profile.allocatedDealershipId]?.name
+                : 'All Asaf Auto Sales VW Dealerships';
+              const mailSubject = `Welcome to ${branchLabel} — Your Dealership Portal Access`;
+              const mailtoHref = `mailto:${encodeURIComponent(
+                createdStaffReceipt.profile.email
+              )}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(
+                welcomeMessage
+              )}`;
+              const whatsappHref = toWhatsAppMessageHref(
+                createdStaffReceipt.profile.phone,
+                welcomeMessage
+              );
 
-              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-2.5 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[#475569]">Work Email:</span>
-                  <span className="font-mono font-semibold text-[#091224]">
-                    {createdStaffReceipt.profile.email}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[#475569]">Temporary Password:</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold text-[#001E50] bg-white border border-[#E2E8F0] rounded px-2 py-0.5">
-                      {createdStaffReceipt.temporaryPassword}
-                    </span>
+              return (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-xs text-emerald-950 space-y-1.5">
+                    <p className="font-semibold text-sm">
+                      {createdStaffReceipt.profile.fullName} added as{' '}
+                      {createdStaffReceipt.profile.role === 'admin'
+                        ? 'Administrator'
+                        : 'Car Sales Agent'}
+                    </p>
+                    <p>
+                      <strong>Allocated Dealership:</strong> {branchLabel}
+                    </p>
+                  </div>
+
+                  {createdStaffReceipt.welcomeStatus && (
+                    <div
+                      className={cn(
+                        'rounded-xl border p-3.5 text-xs flex flex-wrap items-start justify-between gap-3',
+                        createdStaffReceipt.welcomeStatus.sent
+                          ? 'border-emerald-200 bg-emerald-50/70 text-emerald-950'
+                          : 'border-amber-200 bg-amber-50 text-amber-950'
+                      )}
+                    >
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                        {createdStaffReceipt.welcomeStatus.sent ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                        )}
+                        <div className="space-y-0.5">
+                          <p className="font-semibold">
+                            {createdStaffReceipt.welcomeStatus.sent
+                              ? `Welcome Email Sent Automatically (${
+                                  createdStaffReceipt.welcomeStatus.provider === 'resend'
+                                    ? 'Resend'
+                                    : 'SMTP'
+                                })`
+                              : 'Welcome Message Ready to Send'}
+                          </p>
+                          <p className="leading-relaxed">
+                            {createdStaffReceipt.welcomeStatus.message}
+                          </p>
+                        </div>
+                      </div>
+
+                      {!createdStaffReceipt.welcomeStatus.sent && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={resendingWelcome}
+                          onClick={async () => {
+                            setResendingWelcome(true);
+                            try {
+                              const nextStatus = await sendStaffWelcomeEmail({
+                                fullName: createdStaffReceipt.profile.fullName,
+                                recipientEmail: createdStaffReceipt.profile.email,
+                                role: createdStaffReceipt.profile.role,
+                                allocatedDealershipId:
+                                  createdStaffReceipt.profile.allocatedDealershipId,
+                                temporaryPassword: createdStaffReceipt.temporaryPassword,
+                              });
+                              setCreatedStaffReceipt((prev) =>
+                                prev ? { ...prev, welcomeStatus: nextStatus } : null
+                              );
+                            } finally {
+                              setResendingWelcome(false);
+                            }
+                          }}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          <span>{resendingWelcome ? 'Sending...' : 'Retry Auto-Email'}</span>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-2.5 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#475569]">Username (Work Email):</span>
+                      <span className="font-mono font-semibold text-[#091224]">
+                        {createdStaffReceipt.profile.email}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#475569]">Temporary Password:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold text-[#001E50] bg-white border border-[#E2E8F0] rounded px-2 py-0.5">
+                          {createdStaffReceipt.temporaryPassword}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            void copyText('receipt-pw', createdStaffReceipt.temporaryPassword)
+                          }
+                        >
+                          {copiedKey === 'receipt-pw' ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Welcome Message Preview</Label>
+                    <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-xl border border-[#E2E8F0] bg-white p-3.5 font-sans text-xs leading-relaxed text-[#334155]">
+                      {welcomeMessage}
+                    </pre>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2.5 border-t border-[#E2E8F0] pt-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {whatsappHref && (
+                        <a
+                          href={whatsappHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-9 items-center gap-2 rounded-lg bg-emerald-600 px-3.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700"
+                        >
+                          <MessageCircle className="h-3.5 w-3.5" />
+                          <span>Send via WhatsApp</span>
+                        </a>
+                      )}
+                      <a
+                        href={mailtoHref}
+                        className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#CBD5E1] bg-white px-3.5 text-xs font-medium text-[#091224] transition-colors hover:border-[#001E50] hover:text-[#001E50]"
+                      >
+                        <Mail className="h-3.5 w-3.5 text-[#00437A]" />
+                        <span>Open Email App</span>
+                      </a>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void copyText('receipt-all', welcomeMessage)}
+                      >
+                        {copiedKey === 'receipt-all' ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        <span>
+                          {copiedKey === 'receipt-all' ? 'Copied Message' : 'Copy Welcome Message'}
+                        </span>
+                      </Button>
+                    </div>
+
                     <Button
                       type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        void copyText('receipt-pw', createdStaffReceipt.temporaryPassword)
-                      }
+                      onClick={() => {
+                        setShowCreateStaffModal(false);
+                        setCreatedStaffReceipt(null);
+                      }}
                     >
-                      {copiedKey === 'receipt-pw' ? (
-                        <Check className="h-3.5 w-3.5 text-emerald-600" />
-                      ) : (
-                        <Copy className="h-3.5 w-3.5" />
-                      )}
+                      Done
                     </Button>
                   </div>
                 </div>
-              </div>
-
-              <div className="flex flex-wrap justify-end gap-2.5 border-t border-[#E2E8F0] pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    const branchText = createdStaffReceipt.profile.allocatedDealershipId
-                      ? dealershipsById[createdStaffReceipt.profile.allocatedDealershipId]?.name
-                      : 'All Group Dealerships';
-                    const message = `Asaf Auto Sales Dealership Portal Access\nName: ${createdStaffReceipt.profile.fullName}\nBranch: ${branchText}\nRole: ${
-                      createdStaffReceipt.profile.role === 'admin'
-                        ? 'Administrator'
-                        : 'Car Sales Agent'
-                    }\nWork Email: ${createdStaffReceipt.profile.email}\nTemporary Password: ${
-                      createdStaffReceipt.temporaryPassword
-                    }\nPlease sign in at /admin and set your personal password on first login.`;
-                    void copyText('receipt-all', message);
-                  }}
-                >
-                  {copiedKey === 'receipt-all' ? (
-                    <Check className="h-4 w-4 text-emerald-600" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                  <span>
-                    {copiedKey === 'receipt-all' ? 'Copied Details' : 'Copy Full Invite Details'}
-                  </span>
-                </Button>
-                <Button
-                  type="button"
-                  onClick={() => {
-                    setShowCreateStaffModal(false);
-                    setCreatedStaffReceipt(null);
-                  }}
-                >
-                  Done
-                </Button>
-              </div>
-            </div>
+              );
+            })()
           ) : (
             <form
               onSubmit={async (e) => {
@@ -3305,20 +3447,34 @@ export function AdminPortalPage() {
                 setBusyAction(true);
                 setStaffModalError(null);
                 try {
+                  const tempPassword = newStaffPassword;
                   const profile = await createStaffUser({
                     fullName: newStaffFullName,
                     phone: newStaffPhone,
                     email: newStaffEmail,
                     role: newStaffRole,
-                    allocatedDealershipId:
-                      newStaffRole === 'agent' ? newStaffBranchId : newStaffBranchId,
-                    defaultPassword: newStaffPassword,
+                    allocatedDealershipId: newStaffBranchId,
+                    defaultPassword: tempPassword,
                   });
+
+                  const welcomeStatus = await sendStaffWelcomeEmail({
+                    fullName: profile.fullName,
+                    recipientEmail: profile.email,
+                    role: profile.role,
+                    allocatedDealershipId: profile.allocatedDealershipId,
+                    temporaryPassword: tempPassword,
+                  });
+
                   setCreatedStaffReceipt({
                     profile,
-                    temporaryPassword: newStaffPassword,
+                    temporaryPassword: tempPassword,
+                    welcomeStatus,
                   });
-                  showFlash(`Created staff account for ${profile.fullName}.`);
+                  showFlash(
+                    welcomeStatus.sent
+                      ? `Created account for ${profile.fullName} and sent welcome email to ${profile.email}.`
+                      : `Created account for ${profile.fullName}. Use the welcome message options in the modal to send credentials.`
+                  );
                 } catch (err) {
                   setStaffModalError(
                     err instanceof Error ? err.message : 'Unable to create staff account.'

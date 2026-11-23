@@ -109,6 +109,13 @@ export function toWhatsAppHref(whatsappNumber: string, branchName: string): stri
   return `https://wa.me/${intl}?text=${msg}`;
 }
 
+export function toWhatsAppMessageHref(phone: string, message: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 9) return '';
+  const intl = digits.startsWith('0') ? `27${digits.slice(1)}` : digits;
+  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
+}
+
 export function toGoogleMapsSearchUrl(address: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }

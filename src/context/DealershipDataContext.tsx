@@ -63,6 +63,7 @@ import {
   LeadSubmissionType,
   StaffRole,
   StaffUserProfile,
+  StaffWelcomeEmailResult,
 } from '../types/dealership';
 import { useDealership } from './DealershipContext';
 
@@ -164,6 +165,13 @@ interface DealershipDataContextValue {
     }
   ) => Promise<void>;
   removeStaffUser: (uid: string) => Promise<void>;
+  sendStaffWelcomeEmail: (payload: {
+    fullName: string;
+    recipientEmail: string;
+    role: StaffRole;
+    allocatedDealershipId: DealershipId | null;
+    temporaryPassword: string;
+  }) => Promise<StaffWelcomeEmailResult>;
 
   // Public booking / lead submission (auto-tags activeDealershipId + homeDealershipId)
   submitLead: (payload: {
@@ -1605,6 +1613,72 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     [user, isAdmin]
   );
 
+  const sendStaffWelcomeEmail = useCallback(
+    async (payload: {
+      fullName: string;
+      recipientEmail: string;
+      role: StaffRole;
+      allocatedDealershipId: DealershipId | null;
+      temporaryPassword: string;
+    }): Promise<StaffWelcomeEmailResult> => {
+      if (!user || !isAdmin) {
+        return {
+          sent: false,
+          reason: 'DELIVERY_FAILED',
+          message: 'Administrator session required to send staff welcome messages.',
+        };
+      }
+
+      try {
+        const idToken = await user.getIdToken();
+        const response = await fetch('/api/send-staff-welcome', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          return {
+            sent: false,
+            reason: 'STATIC_HOSTING',
+            message:
+              'Automated welcome email endpoint is unavailable on static hosting. Use the Email App or WhatsApp buttons below to send credentials.',
+          };
+        }
+
+        const data = (await response.json()) as Partial<StaffWelcomeEmailResult> & {
+          error?: string;
+        };
+
+        return {
+          sent: Boolean(data.sent),
+          provider: data.provider,
+          reason: data.reason ?? (response.ok ? undefined : 'DELIVERY_FAILED'),
+          message:
+            data.message ||
+            data.error ||
+            (data.sent
+              ? `Welcome email sent to ${payload.recipientEmail}.`
+              : 'Unable to send automated welcome email.'),
+        };
+      } catch (err) {
+        return {
+          sent: false,
+          reason: 'DELIVERY_FAILED',
+          message:
+            err instanceof Error
+              ? err.message
+              : 'Network error while attempting to send welcome email.',
+        };
+      }
+    },
+    [user, isAdmin]
+  );
+
   const value: DealershipDataContextValue = {
     todayISO,
     user,
@@ -1654,6 +1728,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     createStaffUser,
     updateStaffUser,
     removeStaffUser,
+    sendStaffWelcomeEmail,
     submitLead,
   };
 

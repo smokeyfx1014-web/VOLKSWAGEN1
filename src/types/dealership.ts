@@ -202,6 +202,13 @@ export interface StaffUserProfile {
   updatedBy: string;
 }
 
+export interface StaffWelcomeEmailResult {
+  sent: boolean;
+  provider?: 'resend' | 'smtp';
+  reason?: 'NO_MAIL_PROVIDER' | 'DELIVERY_FAILED' | 'STATIC_HOSTING';
+  message: string;
+}
+
 export type AppRoute =
   | '/'
   | '/vehicles'
