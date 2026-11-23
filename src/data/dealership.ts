@@ -21,6 +21,28 @@ export const GROUP_CORPORATE_INFO = {
   vwRoadsideTollFree: '0800 111 992',
   vwRoadsideCrossBorder: '+27 41 994 5615',
   testDriveHoursSummary: 'Mon–Fri: 09:00 – 15:00 · Sat: 09:00 – 11:00 · Sun: Closed',
+  youtubeUrl: 'https://www.youtube.com/@DocratGroup',
+};
+
+export const BRANCH_SOCIAL_LINKS: Record<
+  DealershipId,
+  { facebookUrl: string; instagramUrl: string; youtubeUrl: string }
+> = {
+  '1': {
+    facebookUrl: 'https://www.facebook.com/NewcastleVWAudi/',
+    instagramUrl: 'https://www.instagram.com/newcastle_vw/',
+    youtubeUrl: 'https://www.youtube.com/@DocratGroup',
+  },
+  '2': {
+    facebookUrl: 'https://www.facebook.com/ermelovolkswagenkzn/',
+    instagramUrl: 'https://www.instagram.com/ermelovw/',
+    youtubeUrl: 'https://www.youtube.com/@DocratGroup',
+  },
+  '3': {
+    facebookUrl: 'https://www.facebook.com/VryheidVW/',
+    instagramUrl: 'https://www.instagram.com/vryheidvw/',
+    youtubeUrl: 'https://www.youtube.com/@DocratGroup',
+  },
 };
 
 export const DEFAULT_DEALERSHIPS: Record<DealershipId, DealershipRecord> = {

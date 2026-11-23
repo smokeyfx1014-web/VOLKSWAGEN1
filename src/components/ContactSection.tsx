@@ -3,15 +3,22 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  Facebook,
+  Instagram,
   Mail,
   MapPin,
   MessageCircle,
   Phone,
   ShieldAlert,
+  Youtube,
 } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
-import { CONTACT_CARD_ASSETS, GROUP_CORPORATE_INFO } from '../data/dealership';
+import {
+  BRANCH_SOCIAL_LINKS,
+  CONTACT_CARD_ASSETS,
+  GROUP_CORPORATE_INFO,
+} from '../data/dealership';
 import {
   generateBookingRef,
   toGoogleMapsSearchUrl,
@@ -85,7 +92,7 @@ export function ContactSection() {
             description={`Visit our ${activeDealership.city} showroom at ${activeDealership.physicalAddress} or connect directly with Sales, Service, Parts, or Compliance.`}
           />
 
-          <FadeUp delay={0.08} className="flex flex-wrap items-center gap-3">
+          <FadeUp delay={0.08} className="flex flex-wrap items-center gap-2.5">
             <a
               href={mapsUrl}
               target="_blank"
@@ -107,6 +114,36 @@ export function ContactSection() {
                 <span>WhatsApp ({activeDealership.whatsappNumber})</span>
               </a>
             )}
+            <a
+              href={BRANCH_SOCIAL_LINKS[activeDealership.id].facebookUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${activeDealership.name} on Facebook`}
+              title={`${activeDealership.name} on Facebook`}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
+            >
+              <Facebook className="h-4 w-4" />
+            </a>
+            <a
+              href={BRANCH_SOCIAL_LINKS[activeDealership.id].instagramUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${activeDealership.name} on Instagram`}
+              title={`${activeDealership.name} on Instagram`}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
+            >
+              <Instagram className="h-4 w-4" />
+            </a>
+            <a
+              href={BRANCH_SOCIAL_LINKS[activeDealership.id].youtubeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${GROUP_CORPORATE_INFO.groupName} on YouTube`}
+              title={`${GROUP_CORPORATE_INFO.groupName} on YouTube`}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
+            >
+              <Youtube className="h-4 w-4" />
+            </a>
           </FadeUp>
         </div>
 

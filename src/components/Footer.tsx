@@ -1,7 +1,7 @@
 import React from 'react';
-import { ExternalLink, Facebook, Instagram, Linkedin, Youtube } from 'lucide-react';
+import { ExternalLink, Facebook, Instagram, Youtube } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
-import { GROUP_CORPORATE_INFO } from '../data/dealership';
+import { BRANCH_SOCIAL_LINKS, GROUP_CORPORATE_INFO } from '../data/dealership';
 import { toIntlPhoneDisplay, toTelHref } from '../lib/utils';
 import { AppRoute, DealershipId } from '../types/dealership';
 import { VolkswagenEmblem } from './Navbar';
@@ -68,21 +68,34 @@ export function Footer({ onNavigate }: FooterProps) {
 
               <div className="flex items-center gap-2.5">
                 {[
-                  { label: 'Facebook', icon: Facebook },
-                  { label: 'Instagram', icon: Instagram },
-                  { label: 'LinkedIn', icon: Linkedin },
-                  { label: 'YouTube', icon: Youtube },
+                  {
+                    label: 'Facebook',
+                    icon: Facebook,
+                    href: BRANCH_SOCIAL_LINKS[activeDealership.id].facebookUrl,
+                    ariaLabel: `${activeDealership.name} on Facebook`,
+                  },
+                  {
+                    label: 'Instagram',
+                    icon: Instagram,
+                    href: BRANCH_SOCIAL_LINKS[activeDealership.id].instagramUrl,
+                    ariaLabel: `${activeDealership.name} on Instagram`,
+                  },
+                  {
+                    label: 'YouTube',
+                    icon: Youtube,
+                    href: BRANCH_SOCIAL_LINKS[activeDealership.id].youtubeUrl,
+                    ariaLabel: `${GROUP_CORPORATE_INFO.groupName} on YouTube`,
+                  },
                 ].map((social) => {
                   const Icon = social.icon;
                   return (
                     <a
                       key={social.label}
-                      href="/contact"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        onNavigate('/contact');
-                      }}
-                      aria-label={`${activeDealership.name} on ${social.label}`}
+                      href={social.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={social.ariaLabel}
+                      aria-label={social.ariaLabel}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 text-white/75 transition-colors hover:border-white/40 hover:bg-white/10 hover:text-white"
                     >
                       <Icon className="h-4 w-4" />
