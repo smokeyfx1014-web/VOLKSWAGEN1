@@ -26,6 +26,9 @@ COPY --from=builder /app/firebase-applet-config.json ./firebase-applet-config.js
 COPY --from=builder /app/src/lib/autotraderParser.ts ./src/lib/autotraderParser.ts
 COPY --from=builder /app/src/types/dealership.ts ./src/types/dealership.ts
 
+RUN mkdir -p /app/uploads
+VOLUME ["/app/uploads"]
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

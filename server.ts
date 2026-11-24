@@ -1,4 +1,5 @@
 import express, { type Request } from 'express';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -67,10 +68,11 @@ async function fetchOwnFirestoreDoc(
   return (await response.json()) as FirestoreRestDoc;
 }
 
-async function verifyAdminCaller(
-  req: Request
+async function verifyPortalCaller(
+  req: Request,
+  requireAdmin: boolean
 ): Promise<
-  | { ok: true; decoded: DecodedIdToken }
+  | { ok: true; decoded: DecodedIdToken; isAdmin: boolean }
   | { ok: false; status: number; error: string }
 > {
   const authHeader = req.headers.authorization ?? '';
@@ -91,7 +93,7 @@ async function verifyAdminCaller(
     decoded.email_verified &&
     decoded.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL
   ) {
-    return { ok: true, decoded };
+    return { ok: true, decoded, isAdmin: true };
   }
 
   const [staffDoc, adminDoc] = await Promise.all([
@@ -99,12 +101,13 @@ async function verifyAdminCaller(
     fetchOwnFirestoreDoc('admins', decoded.uid, idToken).catch(() => null),
   ]);
 
-  const isStaffAdmin =
-    staffDoc?.fields?.role?.stringValue === 'admin' &&
-    staffDoc?.fields?.active?.booleanValue === true;
+  const staffRole = staffDoc?.fields?.role?.stringValue ?? '';
+  const staffActive = staffDoc?.fields?.active?.booleanValue === true;
+  const isStaffAdmin = staffRole === 'admin' && staffActive;
   const isRosterAdmin = adminDoc?.fields?.role?.stringValue === 'admin';
+  const isAdmin = isStaffAdmin || isRosterAdmin;
 
-  if (!isStaffAdmin && !isRosterAdmin) {
+  if (requireAdmin && !isAdmin) {
     return {
       ok: false,
       status: 403,
@@ -112,8 +115,49 @@ async function verifyAdminCaller(
     };
   }
 
-  return { ok: true, decoded };
+  const isAuthorizedStaff =
+    isAdmin ||
+    (staffActive && ['agent', 'marketing', 'parts', 'service'].includes(staffRole));
+
+  if (!isAuthorizedStaff) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Active dealership staff privileges are required to upload media.',
+    };
+  }
+
+  return { ok: true, decoded, isAdmin };
 }
+
+async function verifyAdminCaller(
+  req: Request
+): Promise<
+  | { ok: true; decoded: DecodedIdToken }
+  | { ok: false; status: number; error: string }
+> {
+  const result = await verifyPortalCaller(req, true);
+  if (!result.ok) return result;
+  return { ok: true, decoded: result.decoded };
+}
+
+const UPLOAD_CATEGORIES = new Set(['logos', 'promotions', 'vehicles', 'news']);
+const IMAGE_MIME_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/avif': '.avif',
+  'image/svg+xml': '.svg',
+};
+const VIDEO_MIME_EXT: Record<string, string> = {
+  'video/mp4': '.mp4',
+  'video/webm': '.webm',
+  'video/quicktime': '.mov',
+};
+const MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
+const MAX_VIDEO_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 interface ScrapeBranchInput {
   id: DealershipId;
@@ -177,6 +221,107 @@ async function fetchDecodoPageHtml(pageUrl: string, apiKey: string): Promise<str
 
 async function createServer() {
   const app = express();
+  const uploadsRoot = path.resolve(__dirname, 'uploads');
+  fs.mkdirSync(uploadsRoot, { recursive: true });
+
+  app.use(
+    '/uploads',
+    (req, res, next) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      if (req.path.toLowerCase().endsWith('.svg')) {
+        res.setHeader(
+          'Content-Security-Policy',
+          "sandbox; default-src 'none'; style-src 'unsafe-inline'"
+        );
+      }
+      next();
+    },
+    express.static(uploadsRoot, { maxAge: '7d', index: false })
+  );
+
+  app.post(
+    '/api/upload-media',
+    express.raw({ type: '*/*', limit: '26mb' }),
+    async (req, res) => {
+      try {
+        const rawCategory = String(req.query.category || 'promotions').trim().toLowerCase();
+        const category = UPLOAD_CATEGORIES.has(rawCategory) ? rawCategory : 'promotions';
+        const requireAdmin = category === 'logos';
+
+        const authCheck = await verifyPortalCaller(req, requireAdmin);
+        if (!authCheck.ok) {
+          res.status(authCheck.status).json({ error: authCheck.error });
+          return;
+        }
+
+        const mime = String(req.headers['content-type'] || '')
+          .toLowerCase()
+          .split(';')[0]
+          .trim();
+        const imageExt = IMAGE_MIME_EXT[mime];
+        const videoExt = VIDEO_MIME_EXT[mime];
+
+        if (!imageExt && !(category === 'promotions' && videoExt)) {
+          res.status(400).json({
+            error:
+              category === 'promotions'
+                ? 'Unsupported file type. Upload PNG, JPG, WebP, SVG, GIF, AVIF, MP4, WebM, or MOV.'
+                : 'Unsupported image type. Upload PNG, JPG, WebP, SVG, GIF, or AVIF.',
+          });
+          return;
+        }
+
+        const fileBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        if (fileBuffer.length === 0) {
+          res.status(400).json({ error: 'Uploaded file is empty.' });
+          return;
+        }
+
+        const isVideo = Boolean(videoExt);
+        const maxBytes = isVideo ? MAX_VIDEO_UPLOAD_BYTES : MAX_IMAGE_UPLOAD_BYTES;
+        if (fileBuffer.length > maxBytes) {
+          res.status(413).json({
+            error: isVideo
+              ? 'Video file exceeds the 25 MB limit.'
+              : 'Image file exceeds the 8 MB limit.',
+          });
+          return;
+        }
+
+        let originalName = 'media';
+        try {
+          originalName = decodeURIComponent(String(req.headers['x-file-name'] || 'media'));
+        } catch {
+          originalName = String(req.headers['x-file-name'] || 'media');
+        }
+        const safeStem =
+          path
+            .basename(originalName, path.extname(originalName))
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 40) || 'asset';
+
+        const ext = imageExt || videoExt;
+        const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeStem}${ext}`;
+        const categoryDir = path.join(uploadsRoot, category);
+        fs.mkdirSync(categoryDir, { recursive: true });
+        fs.writeFileSync(path.join(categoryDir, filename), fileBuffer);
+
+        res.status(201).json({
+          url: `/uploads/${category}/${filename}`,
+          mediaType: isVideo ? 'video' : 'image',
+          mimeType: mime,
+          sizeBytes: fileBuffer.length,
+        });
+      } catch (err) {
+        res.status(500).json({
+          error: err instanceof Error ? err.message : 'Unable to save uploaded media file.',
+        });
+      }
+    }
+  );
+
   app.use(express.json({ limit: '1mb' }));
 
   app.post('/api/autotrader-scrape', async (req, res) => {

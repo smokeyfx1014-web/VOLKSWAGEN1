@@ -5,6 +5,7 @@ import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { CmsNewsArticle, DealershipId, MotoringArticle } from '../types/dealership';
 import { FadeUp, SectionHeader } from './MotionPrimitives';
+import { PromotionMedia } from './PromotionMedia';
 import { Button } from './ui/shadcn';
 
 interface NewsAndEventsPageProps {
@@ -83,12 +84,11 @@ export function NewsAndEventsPage({
                       className="group flex h-full flex-col overflow-hidden rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] transition-shadow hover:shadow-lg"
                     >
                       <div className="relative aspect-16/10 w-full overflow-hidden border-b border-[#E2E8F0] bg-[#E2E8F0]">
-                        <img
+                        <PromotionMedia
                           src={ev.imageUrl}
                           alt={ev.title}
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                          className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
+                          mediaType={ev.mediaType}
+                          hoverZoom
                         />
                         <div className="absolute top-3 left-3 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs">
                           {scopeLabel}

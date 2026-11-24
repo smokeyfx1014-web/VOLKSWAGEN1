@@ -44,6 +44,7 @@ import {
   formatZarPrice,
   normalizeAutoTraderJsonInput,
 } from '../lib/autotraderParser';
+import { isVideoMedia } from '../lib/mediaUpload';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   OperationType,
@@ -1437,12 +1438,18 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         ? 'special'
         : promo.type;
 
+      const trimmedMediaUrl = promo.imageUrl.trim().slice(0, 500);
+      const resolvedMediaType = isVideoMedia(trimmedMediaUrl, promo.mediaType)
+        ? 'video'
+        : 'image';
+
       const payload = {
         id,
         title: promo.title.trim().slice(0, 160),
         type: promoType,
         description: promo.description.trim().slice(0, 1000),
-        imageUrl: promo.imageUrl.trim().slice(0, 500),
+        imageUrl: trimmedMediaUrl,
+        mediaType: resolvedMediaType,
         validUntil: promo.validUntil,
         scope,
         dealershipId,

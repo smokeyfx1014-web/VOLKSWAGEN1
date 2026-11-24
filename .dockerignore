@@ -10,3 +10,4 @@ DRAFT_firestore.rules
 *.log
 npm-debug.log*
 .DS_Store
+uploads

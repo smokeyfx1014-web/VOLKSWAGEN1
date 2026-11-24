@@ -142,6 +142,7 @@ docker run -d \
   --name vw-dealership \
   --restart unless-stopped \
   -p 3000:3000 \
+  -v "$(pwd)/uploads:/app/uploads" \
   --env-file .env \
   vw-dealership-platform:latest
 ```
@@ -165,6 +166,8 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
+    volumes:
+      - ./uploads:/app/uploads
     env_file:
       - .env
     environment:
@@ -269,7 +272,7 @@ server {
         branch3.yourgroup.co.za www.branch3.yourgroup.co.za
         branch4.yourgroup.co.za www.branch4.yourgroup.co.za;
 
-    client_max_body_size 15M;
+    client_max_body_size 30M;
 
     location / {
         proxy_pass http://127.0.0.1:3000;

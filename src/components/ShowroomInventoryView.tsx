@@ -22,6 +22,7 @@ import {
 } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
 import { SectionHeader } from './MotionPrimitives';
+import { PromotionMedia } from './PromotionMedia';
 import { VehicleImageSlider } from './VehicleImageSlider';
 import { Button, Select } from './ui/shadcn';
 
@@ -178,12 +179,11 @@ export function ShowroomInventoryView({
                       className="group flex h-full flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white transition-shadow duration-200 hover:shadow-lg"
                     >
                       <div className="relative aspect-4/3 w-full overflow-hidden border-b border-[#E2E8F0] bg-[#F1F5F9]">
-                        <img
+                        <PromotionMedia
                           src={special.imageUrl}
                           alt={special.title}
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                          className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
+                          mediaType={special.mediaType}
+                          hoverZoom
                         />
                         <div className="absolute top-3 left-3 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs">
                           {scopeLabel}
@@ -299,10 +299,12 @@ export function ShowroomInventoryView({
                     className="group grid grid-cols-1 overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white sm:grid-cols-12 hover:shadow-lg transition-shadow"
                   >
                     <div className="sm:col-span-5 overflow-hidden bg-[#F1F5F9]">
-                      <img
+                      <PromotionMedia
                         src={comp.imageUrl}
                         alt={comp.title}
-                        className="h-full min-h-[200px] w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        mediaType={comp.mediaType}
+                        hoverZoom
+                        className="min-h-[200px]"
                       />
                     </div>
                     <div className="flex flex-col justify-between p-6 sm:col-span-7">

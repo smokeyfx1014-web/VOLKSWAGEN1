@@ -167,6 +167,7 @@
         "type": { "type": "string", "enum": ["special", "event", "competition"] },
         "description": { "type": "string", "minLength": 5, "maxLength": 1000 },
         "imageUrl": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
         "validUntil": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "maxLength": 10 },
         "scope": { "type": "string", "enum": ["MASTER", "BRANCH"] },
         "dealershipId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },

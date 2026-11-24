@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
@@ -13,7 +13,9 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Film,
   Globe,
+  Image as ImageIcon,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -40,6 +42,12 @@ import {
 import { useDealership, isValidBranchIdFormat } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { DEALERSHIP_IMAGE_LIBRARY } from '../data/dealership';
+import {
+  MediaUploadCategory,
+  UploadedMediaType,
+  isVideoMedia,
+  uploadDealershipMedia,
+} from '../lib/mediaUpload';
 import { cn, formatZAR, toGoogleMapsEmbedUrl, toWhatsAppMessageHref } from '../lib/utils';
 import {
   AutoTraderSyncReport,
@@ -56,6 +64,7 @@ import {
   StaffUserProfile,
   VehicleStatus,
 } from '../types/dealership';
+import { PromotionMedia } from './PromotionMedia';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
 type AdminTab =
@@ -196,15 +205,141 @@ function addDaysISO(baseISO: string, days: number): string {
   ).padStart(2, '0')}`;
 }
 
+function LogoUploadField({
+  label,
+  value,
+  onChange,
+  previewBg = 'light',
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  previewBg?: 'dark' | 'light';
+  hint?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const result = await uploadDealershipMedia(file, 'logos');
+      onChange(result.url);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Unable to upload logo picture.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <Input
+          value={value}
+          placeholder="/uploads/logos/... or https://..."
+          onChange={(e) => {
+            setUploadError(null);
+            onChange(e.target.value);
+          }}
+          required
+          className="flex-1"
+        />
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/avif"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+          className="whitespace-nowrap shrink-0"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          <span>{uploading ? 'Uploading...' : 'Upload Logo'}</span>
+        </Button>
+      </div>
+      {hint && <p className="text-[11px] text-[#64748B]">{hint}</p>}
+      {uploadError && (
+        <p className="text-xs text-red-600" role="alert">
+          {uploadError}
+        </p>
+      )}
+      {value && (
+        <div
+          className={cn(
+            'inline-flex h-16 max-w-[220px] items-center justify-center rounded-lg border px-3 py-2',
+            previewBg === 'dark'
+              ? 'border-[#001E50]/20 bg-[#001E50]'
+              : 'border-[#E2E8F0] bg-[#F8FAFC]'
+          )}
+        >
+          <img
+            src={value}
+            alt={label}
+            referrerPolicy="no-referrer"
+            className="max-h-11 w-auto object-contain"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImageSourceField({
   value,
   onChange,
+  uploadCategory = 'promotions',
+  allowVideo = false,
+  mediaType,
+  onMediaTypeChange,
 }: {
   value: string;
   onChange: (next: string) => void;
+  uploadCategory?: MediaUploadCategory;
+  allowVideo?: boolean;
+  mediaType?: UploadedMediaType;
+  onMediaTypeChange?: (next: UploadedMediaType) => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const isVideo = allowVideo && isVideoMedia(value, mediaType);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const result = await uploadDealershipMedia(file, uploadCategory);
+      onChange(result.url);
+      onMediaTypeChange?.(result.mediaType);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-3">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <Label>Choose Dealership Image Preset</Label>
@@ -214,7 +349,9 @@ function ImageSourceField({
             }
             onChange={(e) => {
               if (e.target.value !== 'custom') {
+                setUploadError(null);
                 onChange(e.target.value);
+                onMediaTypeChange?.('image');
               }
             }}
           >
@@ -223,26 +360,95 @@ function ImageSourceField({
                 {item.category}: {item.label}
               </option>
             ))}
-            <option value="custom">Custom URL / Path</option>
+            <option value="custom">Custom URL / Uploaded Media</option>
           </Select>
         </div>
         <div>
-          <Label>Or Enter Image URL / Path *</Label>
+          <Label>
+            {allowVideo ? 'Or Enter Picture / Video URL *' : 'Or Enter Image URL / Path *'}
+          </Label>
           <Input
             value={value}
-            placeholder="/assets/... or https://..."
-            onChange={(e) => onChange(e.target.value)}
+            placeholder={
+              allowVideo ? '/uploads/... or https://... (.jpg, .png, .mp4)' : '/assets/... or https://...'
+            }
+            onChange={(e) => {
+              const nextVal = e.target.value;
+              setUploadError(null);
+              onChange(nextVal);
+              if (allowVideo && onMediaTypeChange) {
+                onMediaTypeChange(isVideoMedia(nextVal) ? 'video' : 'image');
+              }
+            }}
             required
           />
         </div>
       </div>
+
+      {/* Direct File Upload Box */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] px-4 py-3">
+        <div className="flex items-center gap-2.5 text-xs text-[#475569]">
+          {allowVideo ? (
+            <Film className="h-4 w-4 text-[#001E50] shrink-0" />
+          ) : (
+            <ImageIcon className="h-4 w-4 text-[#001E50] shrink-0" />
+          )}
+          <div>
+            <p className="font-semibold text-[#091224]">
+              {allowVideo ? 'Upload Picture or Video from Device' : 'Upload Picture from Device'}
+            </p>
+            <p className="text-[11px] text-[#64748B]">
+              {allowVideo
+                ? 'Pictures (PNG, JPG, WebP, SVG up to 8 MB) or Videos (MP4, WebM, MOV up to 25 MB).'
+                : 'Pictures (PNG, JPG, WebP, SVG, GIF up to 8 MB).'}
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={
+              allowVideo
+                ? 'image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/avif,video/mp4,video/webm,video/quicktime'
+                : 'image/png,image/jpeg,image/webp,image/svg+xml,image/gif,image/avif'
+            }
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+            className="whitespace-nowrap shrink-0"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            <span>
+              {uploading
+                ? 'Uploading...'
+                : allowVideo
+                ? 'Upload Picture / Video'
+                : 'Upload Picture'}
+            </span>
+          </Button>
+        </div>
+      </div>
+
+      {uploadError && (
+        <p className="text-xs text-red-600" role="alert">
+          {uploadError}
+        </p>
+      )}
+
       {value && (
-        <div className="h-28 w-48 overflow-hidden rounded-lg border border-[#E2E8F0] bg-[#F1F5F9]">
-          <img
+        <div className="relative h-36 w-64 overflow-hidden rounded-lg border border-[#E2E8F0] bg-[#F1F5F9]">
+          <PromotionMedia
             src={value}
-            alt="Preview"
-            referrerPolicy="no-referrer"
-            className="h-full w-full object-cover"
+            alt="Media preview"
+            mediaType={isVideo ? 'video' : 'image'}
           />
         </div>
       )}
@@ -2021,10 +2227,10 @@ export function AdminPortalPage() {
                       className="flex flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white"
                     >
                       <div className="relative h-40 w-full bg-[#F1F5F9]">
-                        <img
+                        <PromotionMedia
                           src={promo.imageUrl}
                           alt={promo.title}
-                          className="h-full w-full object-cover"
+                          mediaType={promo.mediaType}
                         />
                         <span className="absolute top-2.5 left-2.5 rounded bg-white/95 px-2 py-0.5 text-[11px] font-semibold text-[#001E50] uppercase shadow-xs">
                           {promo.type}
@@ -2502,24 +2708,20 @@ export function AdminPortalPage() {
                     onChange={(e) => setGroupDraft({ ...groupDraft, youtubeUrl: e.target.value })}
                   />
                 </div>
-                <div>
-                  <Label>Group Footer Logo URL / Path *</Label>
-                  <Input
-                    value={groupDraft.groupLogoSrc}
-                    onChange={(e) => setGroupDraft({ ...groupDraft, groupLogoSrc: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label>Header Emblem Logo URL / Path *</Label>
-                  <Input
-                    value={groupDraft.emblemLogoSrc}
-                    onChange={(e) =>
-                      setGroupDraft({ ...groupDraft, emblemLogoSrc: e.target.value })
-                    }
-                    required
-                  />
-                </div>
+                <LogoUploadField
+                  label="Group Footer Logo URL / Path *"
+                  value={groupDraft.groupLogoSrc}
+                  previewBg="dark"
+                  hint="Recommended: transparent PNG, WebP, or SVG light/white group logo (max 8 MB)."
+                  onChange={(url) => setGroupDraft({ ...groupDraft, groupLogoSrc: url })}
+                />
+                <LogoUploadField
+                  label="Header Emblem Logo URL / Path *"
+                  value={groupDraft.emblemLogoSrc}
+                  previewBg="light"
+                  hint="Recommended: square emblem PNG, WebP, or SVG (max 8 MB)."
+                  onChange={(url) => setGroupDraft({ ...groupDraft, emblemLogoSrc: url })}
+                />
                 <div>
                   <Label>Test-Drive Hours Summary *</Label>
                   <Input
@@ -3623,6 +3825,7 @@ export function AdminPortalPage() {
             </div>
 
             <ImageSourceField
+              uploadCategory="vehicles"
               value={editingVehicle.images[0] ?? ''}
               onChange={(url) =>
                 setEditingVehicle({
@@ -3851,8 +4054,12 @@ export function AdminPortalPage() {
             </div>
 
             <ImageSourceField
+              uploadCategory="promotions"
+              allowVideo
               value={editingPromo.imageUrl}
+              mediaType={editingPromo.mediaType}
               onChange={(url) => setEditingPromo({ ...editingPromo, imageUrl: url })}
+              onMediaTypeChange={(mt) => setEditingPromo({ ...editingPromo, mediaType: mt })}
             />
 
             <label className="flex items-center gap-2 text-xs text-[#334155]">
@@ -3982,6 +4189,7 @@ export function AdminPortalPage() {
               />
             </div>
             <ImageSourceField
+              uploadCategory="news"
               value={editingNews.imageSrc}
               onChange={(url) => setEditingNews({ ...editingNews, imageSrc: url })}
             />

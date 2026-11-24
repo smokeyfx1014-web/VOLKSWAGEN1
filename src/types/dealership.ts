@@ -157,6 +157,7 @@ export interface CmsPromotion {
   type: PromotionType;
   description: string;
   imageUrl: string;
+  mediaType?: 'image' | 'video';
   validUntil: string; // YYYY-MM-DD
   scope: PromotionScope;
   dealershipId: DealershipId | null;
