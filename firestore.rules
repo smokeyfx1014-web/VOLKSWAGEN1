@@ -81,7 +81,7 @@ service cloud.firestore {
           'id', 'groupName', 'legalEntity', 'fspNumber', 'complianceOfficer',
           'complianceEmail', 'vwRoadsideTollFree', 'vwRoadsideCrossBorder',
           'testDriveHoursSummary', 'groupLogoSrc', 'emblemLogoSrc', 'youtubeUrl',
-          'defaultBranchId', 'updatedAt', 'updatedBy'
+          'defaultBranchId', 'defaultNotifyEmail', 'updatedAt', 'updatedBy'
         ])
         && data.id == 'main'
         && data.groupName is string && data.groupName.size() >= 2 && data.groupName.size() <= 120
@@ -96,6 +96,7 @@ service cloud.firestore {
         && data.emblemLogoSrc is string && data.emblemLogoSrc.size() <= 500
         && data.youtubeUrl is string && data.youtubeUrl.size() <= 300
         && isValidBranchId(data.defaultBranchId)
+        && (!('defaultNotifyEmail' in data) || (data.defaultNotifyEmail is string && data.defaultNotifyEmail.size() <= 140))
         && data.updatedAt == request.time
         && data.updatedBy is string && data.updatedBy == request.auth.uid;
     }
@@ -115,7 +116,12 @@ service cloud.firestore {
           'roadsideAssist', 'vwFinancialServices', 'volkswagensure',
           'mapEmbedUrl', 'facebookUrl', 'instagramUrl', 'youtubeUrl',
           'autotraderDealerId', 'autotraderUrl', 'syncEnabled',
-          'archived', 'sortOrder', 'updatedAt', 'updatedBy'
+          'archived', 'sortOrder',
+          'salesNotifyEmail', 'serviceNotifyEmail', 'partsNotifyEmail',
+          'financeNotifyEmail', 'generalNotifyEmail',
+          'smtpHost', 'smtpPort', 'smtpUser', 'smtpFrom',
+          'defaultNotifyEmail', 'smtpPassEnvKey',
+          'updatedAt', 'updatedBy'
         ])
         && isValidBranchId(data.id) && data.id == branchParam
         && data.name is string && data.name.size() >= 3 && data.name.size() <= 120
@@ -145,6 +151,17 @@ service cloud.firestore {
         && (!('syncEnabled' in data) || data.syncEnabled is bool)
         && (!('archived' in data) || data.archived is bool)
         && (!('sortOrder' in data) || (data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000))
+        && (!('salesNotifyEmail' in data) || (data.salesNotifyEmail is string && data.salesNotifyEmail.size() <= 140))
+        && (!('serviceNotifyEmail' in data) || (data.serviceNotifyEmail is string && data.serviceNotifyEmail.size() <= 140))
+        && (!('partsNotifyEmail' in data) || (data.partsNotifyEmail is string && data.partsNotifyEmail.size() <= 140))
+        && (!('financeNotifyEmail' in data) || (data.financeNotifyEmail is string && data.financeNotifyEmail.size() <= 140))
+        && (!('generalNotifyEmail' in data) || (data.generalNotifyEmail is string && data.generalNotifyEmail.size() <= 140))
+        && (!('smtpHost' in data) || (data.smtpHost is string && data.smtpHost.size() <= 140))
+        && (!('smtpPort' in data) || (data.smtpPort is number && data.smtpPort >= 1 && data.smtpPort <= 65535))
+        && (!('smtpUser' in data) || (data.smtpUser is string && data.smtpUser.size() <= 140))
+        && (!('smtpFrom' in data) || (data.smtpFrom is string && data.smtpFrom.size() <= 180))
+        && (!('defaultNotifyEmail' in data) || (data.defaultNotifyEmail is string && data.defaultNotifyEmail.size() <= 140))
+        && (!('smtpPassEnvKey' in data) || (data.smtpPassEnvKey is string && data.smtpPassEnvKey.size() <= 60 && (data.smtpPassEnvKey == '' || data.smtpPassEnvKey.matches('^SMTP_PASS(?:_[A-Z0-9_]{1,40})?$'))))
         && data.updatedAt == request.time
         && data.updatedBy is string && data.updatedBy == request.auth.uid;
     }

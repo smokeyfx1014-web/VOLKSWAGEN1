@@ -1660,6 +1660,25 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
           status: 'new',
           createdAt: serverTimestamp(),
         });
+
+        // Trigger server-side Nodemailer notification in background (never blocks customer confirmation)
+        void fetch('/api/notify-lead', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            leadId: id,
+            leadType: payload.leadType,
+            fullName: payload.fullName.trim().slice(0, 120),
+            phone: payload.phone.trim().slice(0, 30),
+            email: payload.email.trim().slice(0, 140),
+            subject: payload.subject.trim().slice(0, 200),
+            details: payload.details.trim().slice(0, 6000),
+            submittedAtDealershipId: activeDealershipId,
+            homeDealershipId: payload.homeDealershipId ?? null,
+          }),
+        }).catch(() => {
+          // Silently ignore network issues; lead is already persisted in Firestore
+        });
       } catch (err) {
         console.warn('Unable to persist lead record:', err);
       }

@@ -15,6 +15,7 @@ import {
   EyeOff,
   Film,
   Globe,
+  HelpCircle,
   Image as ImageIcon,
   Inbox,
   KeyRound,
@@ -31,6 +32,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  Server,
   Shield,
   ShieldAlert,
   Sparkles,
@@ -65,6 +67,7 @@ import {
   VehicleStatus,
 } from '../types/dealership';
 import { PromotionMedia } from './PromotionMedia';
+import { SmtpPresetSelection, SmtpSetupGuideModal } from './SmtpSetupGuideModal';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
 type AdminTab =
@@ -596,6 +599,7 @@ export function AdminPortalPage() {
     fspNumber: groupProfile.fspNumber,
     complianceOfficer: groupProfile.complianceOfficer,
     complianceEmail: groupProfile.complianceEmail,
+    defaultNotifyEmail: groupProfile.defaultNotifyEmail ?? 'smokeydhlamini@gmail.com',
     vwRoadsideTollFree: groupProfile.vwRoadsideTollFree,
     vwRoadsideCrossBorder: groupProfile.vwRoadsideCrossBorder,
     testDriveHoursSummary: groupProfile.testDriveHoursSummary,
@@ -606,22 +610,31 @@ export function AdminPortalPage() {
   }));
   const [groupSaveError, setGroupSaveError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setGroupDraft({
-      groupName: groupProfile.groupName,
-      legalEntity: groupProfile.legalEntity,
-      fspNumber: groupProfile.fspNumber,
-      complianceOfficer: groupProfile.complianceOfficer,
-      complianceEmail: groupProfile.complianceEmail,
-      vwRoadsideTollFree: groupProfile.vwRoadsideTollFree,
-      vwRoadsideCrossBorder: groupProfile.vwRoadsideCrossBorder,
-      testDriveHoursSummary: groupProfile.testDriveHoursSummary,
-      groupLogoSrc: groupProfile.groupLogoSrc,
-      emblemLogoSrc: groupProfile.emblemLogoSrc,
-      youtubeUrl: groupProfile.youtubeUrl,
-      defaultBranchId: groupProfile.defaultBranchId,
-    });
-  }, [groupProfile]);
+  // Nodemailer SMTP Email Dispatch status & test state
+  const [emailStatus, setEmailStatus] = useState<{
+    configured: boolean;
+    host: string;
+    port: number;
+    senderEmail: string;
+    defaultRecipient: string;
+    branchStatus?: {
+      branchId: string;
+      branchPassKey: string;
+      branchSecretConfigured: boolean;
+      effectiveReady: boolean;
+      configuredHost: string;
+      configuredPort: number;
+      configuredUser: string;
+      configuredFrom: string;
+    } | null;
+  } | null>(null);
+  const [loadingEmailStatus, setLoadingEmailStatus] = useState(false);
+  const [testingEmail, setTestingEmail] = useState(false);
+  const [emailStatusError, setEmailStatusError] = useState<string | null>(null);
+  const [testEmailResult, setTestEmailResult] = useState<string | null>(null);
+  const [smtpGuideTarget, setSmtpGuideTarget] = useState<
+    'group' | 'editBranch' | 'newBranch' | null
+  >(null);
 
   // Branch Settings editor & Add Branch modal state
   const [selectedBranchId, setSelectedBranchId] = useState<DealershipId>(activeDealership.id);
@@ -632,6 +645,57 @@ export function AdminPortalPage() {
   const [newBranchDraft, setNewBranchDraft] = useState<DealershipRecord | null>(null);
   const [addBranchError, setAddBranchError] = useState<string | null>(null);
   const [confirmDeleteBranchId, setConfirmDeleteBranchId] = useState<DealershipId | null>(null);
+
+  const fetchEmailStatus = async (branchIdOverride?: string) => {
+    if (!user || !isAdmin) return;
+    setLoadingEmailStatus(true);
+    setEmailStatusError(null);
+    try {
+      const token = await user.getIdToken();
+      const targetBranch = branchIdOverride ?? selectedBranchId;
+      const response = await fetch(
+        `/api/email-status?branchId=${encodeURIComponent(targetBranch)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Unable to check SMTP email configuration.');
+      }
+      setEmailStatus(data);
+    } catch (err) {
+      setEmailStatusError(
+        err instanceof Error ? err.message : 'Unable to check SMTP email configuration.'
+      );
+    } finally {
+      setLoadingEmailStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'branches' && user) {
+      void fetchEmailStatus(selectedBranchId);
+    }
+  }, [isAdmin, activeTab, user, selectedBranchId]);
+
+  useEffect(() => {
+    setGroupDraft({
+      groupName: groupProfile.groupName,
+      legalEntity: groupProfile.legalEntity,
+      fspNumber: groupProfile.fspNumber,
+      complianceOfficer: groupProfile.complianceOfficer,
+      complianceEmail: groupProfile.complianceEmail,
+      defaultNotifyEmail: groupProfile.defaultNotifyEmail ?? 'smokeydhlamini@gmail.com',
+      vwRoadsideTollFree: groupProfile.vwRoadsideTollFree,
+      vwRoadsideCrossBorder: groupProfile.vwRoadsideCrossBorder,
+      testDriveHoursSummary: groupProfile.testDriveHoursSummary,
+      groupLogoSrc: groupProfile.groupLogoSrc,
+      emblemLogoSrc: groupProfile.emblemLogoSrc,
+      youtubeUrl: groupProfile.youtubeUrl,
+      defaultBranchId: groupProfile.defaultBranchId,
+    });
+  }, [groupProfile]);
 
   useEffect(() => {
     const resolved = dealershipsById[selectedBranchId];
@@ -2732,6 +2796,157 @@ export function AdminPortalPage() {
                     required
                   />
                 </div>
+                <div>
+                  <Label>Default Lead Notification Email *</Label>
+                  <Input
+                    type="email"
+                    value={groupDraft.defaultNotifyEmail ?? ''}
+                    placeholder="leads@yourdealershipgroup.co.za"
+                    onChange={(e) =>
+                      setGroupDraft({ ...groupDraft, defaultNotifyEmail: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Automatic Lead Email Dispatch (Nodemailer SMTP) Status & Test */}
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-5 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Mail className="h-4 w-4 text-[#001E50]" />
+                      <h3 className="font-display text-sm font-semibold text-[#091224]">
+                        Automatic Customer Request Emails (Nodemailer SMTP)
+                      </h3>
+                      {emailStatus && (
+                        <span
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold',
+                            emailStatus.configured
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-900'
+                          )}
+                        >
+                          {emailStatus.configured ? (
+                            <CheckCircle2 className="h-3 w-3" />
+                          ) : (
+                            <AlertTriangle className="h-3 w-3" />
+                          )}
+                          {emailStatus.configured
+                            ? 'SMTP_PASS Connected'
+                            : 'Waiting for SMTP_PASS Secret'}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs text-[#475569]">
+                      Dispatches real-time emails whenever visitors submit Test Drives, Service Bookings, Parts Enquiries, Finance Applications, Contact forms, Events, or Competitions.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSmtpGuideTarget('group')}
+                    >
+                      <HelpCircle className="h-3.5 w-3.5" />
+                      <span>Setup Guide &amp; Manual</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={loadingEmailStatus}
+                      onClick={() => void fetchEmailStatus(selectedBranchId)}
+                    >
+                      <RefreshCw
+                        className={cn('h-3.5 w-3.5', loadingEmailStatus && 'animate-spin')}
+                      />
+                      <span>Refresh Status</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={testingEmail || !emailStatus?.configured}
+                      onClick={async () => {
+                        if (!user) return;
+                        setTestingEmail(true);
+                        setEmailStatusError(null);
+                        setTestEmailResult(null);
+                        try {
+                          const token = await user.getIdToken();
+                          const response = await fetch('/api/notify-lead/test', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              Authorization: `Bearer ${token}`,
+                            },
+                            body: JSON.stringify({
+                              branchId: selectedBranchId,
+                              targetEmail:
+                                groupDraft.defaultNotifyEmail?.trim() ||
+                                branchDraft.salesNotifyEmail?.trim() ||
+                                undefined,
+                            }),
+                          });
+                          const data = await response.json();
+                          if (!response.ok) {
+                            throw new Error(data?.error || 'Unable to send test email.');
+                          }
+                          setTestEmailResult(
+                            `Test email sent from ${data.from} to ${data.to}. Check your inbox!`
+                          );
+                        } catch (err) {
+                          setEmailStatusError(
+                            err instanceof Error ? err.message : 'Unable to send test email.'
+                          );
+                        } finally {
+                          setTestingEmail(false);
+                        }
+                      }}
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      <span>{testingEmail ? 'Sending Test...' : 'Send Test Email'}</span>
+                    </Button>
+                  </div>
+                </div>
+
+                {emailStatus && (
+                  <div className="grid grid-cols-1 gap-2 rounded-lg border border-[#E2E8F0] bg-white px-4 py-3 text-xs text-[#334155] sm:grid-cols-3">
+                    <div>
+                      <span className="font-semibold text-[#091224]">SMTP Host: </span>
+                      {emailStatus.host}:{emailStatus.port}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-[#091224]">Sender Account: </span>
+                      {emailStatus.senderEmail}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-[#091224]">Group Fallback Recipient: </span>
+                      {groupDraft.defaultNotifyEmail || emailStatus.defaultRecipient}
+                    </div>
+                  </div>
+                )}
+
+                {emailStatus && !emailStatus.configured && (
+                  <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    To activate automatic emails, open AI Studio <strong>Settings &rarr; Secrets</strong> (or <code>.env</code> when self-hosting), add <code>SMTP_PASS</code> with your 16-character Gmail App Password, then click <strong>Refresh Status</strong> above.
+                  </p>
+                )}
+
+                {testEmailResult && (
+                  <p className="text-xs text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                    {testEmailResult}
+                  </p>
+                )}
+
+                {emailStatusError && (
+                  <p className="text-xs text-red-900 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {emailStatusError}
+                  </p>
+                )}
               </div>
             </form>
 
@@ -2779,6 +2994,17 @@ export function AdminPortalPage() {
                       receptionNumber: '',
                       whatsappNumber: '',
                       email: '',
+                      salesNotifyEmail: '',
+                      serviceNotifyEmail: '',
+                      partsNotifyEmail: '',
+                      financeNotifyEmail: '',
+                      generalNotifyEmail: '',
+                      smtpHost: 'smtp.gmail.com',
+                      smtpPort: 465,
+                      smtpUser: '',
+                      smtpFrom: '',
+                      defaultNotifyEmail: '',
+                      smtpPassEnvKey: `SMTP_PASS_BRANCH_${nextNum}`,
                       physicalAddress: '',
                       postalAddress: '',
                       city: '',
@@ -3044,6 +3270,351 @@ export function AdminPortalPage() {
                       setBranchDraft({ ...branchDraft, postalAddress: e.target.value })
                     }
                   />
+                </div>
+              </div>
+
+              {/* Department Customer Request Notification Emails (Required) */}
+              <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-display text-sm font-semibold text-[#091224]">
+                      Department Customer Request Routing Emails (Required)
+                    </h3>
+                    <p className="text-xs text-[#64748B]">
+                      Every customer request submitted for this branch is automatically emailed to the responsible department address below.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const fallback =
+                        branchDraft.email.trim() ||
+                        groupDraft.defaultNotifyEmail?.trim() ||
+                        'smokeydhlamini@gmail.com';
+                      setBranchDraft({
+                        ...branchDraft,
+                        salesNotifyEmail: fallback,
+                        serviceNotifyEmail: fallback,
+                        partsNotifyEmail: fallback,
+                        financeNotifyEmail: fallback,
+                        generalNotifyEmail: fallback,
+                      });
+                    }}
+                  >
+                    Fill All from Branch / Group Email
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <Label>Sales &amp; Test-Drive Requests Email *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.salesNotifyEmail ?? ''}
+                      placeholder="sales@branch.co.za"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, salesNotifyEmail: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Service Booking Requests Email *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.serviceNotifyEmail ?? ''}
+                      placeholder="service@branch.co.za"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, serviceNotifyEmail: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Parts Enquiries Email *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.partsNotifyEmail ?? ''}
+                      placeholder="parts@branch.co.za"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, partsNotifyEmail: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Finance Applications Email *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.financeNotifyEmail ?? ''}
+                      placeholder="finance@branch.co.za"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, financeNotifyEmail: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Contact, Events &amp; Competitions Email *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.generalNotifyEmail ?? ''}
+                      placeholder="enquiries@branch.co.za"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, generalNotifyEmail: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Branch Outgoing Email Server (Nodemailer SMTP - Required) */}
+              <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF]/60 p-5 space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Server className="h-4 w-4 text-[#001E50]" />
+                      <h3 className="font-display text-sm font-semibold text-[#091224]">
+                        Branch Outgoing Email Server (Nodemailer SMTP — Required)
+                      </h3>
+                      {emailStatus?.branchStatus &&
+                        emailStatus.branchStatus.branchId === branchDraft.id && (
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold',
+                              emailStatus.branchStatus.branchSecretConfigured
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-900'
+                            )}
+                          >
+                            {emailStatus.branchStatus.branchSecretConfigured ? (
+                              <CheckCircle2 className="h-3 w-3" />
+                            ) : (
+                              <AlertTriangle className="h-3 w-3" />
+                            )}
+                            {emailStatus.branchStatus.branchSecretConfigured
+                              ? `${emailStatus.branchStatus.branchPassKey} Connected`
+                              : `Add ${emailStatus.branchStatus.branchPassKey} in Secrets / .env`}
+                          </span>
+                        )}
+                    </div>
+                    <p className="mt-1 text-xs text-[#475569]">
+                      Customer enquiries submitted on {branchDraft.shortName} are sent from this branch&apos;s own email identity (e.g. <code>web@{branchDraft.domain.replace(/^www\./, '') || 'branch.co.za'}</code>).
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSmtpGuideTarget('editBranch')}
+                    >
+                      <HelpCircle className="h-3.5 w-3.5" />
+                      <span>Help / Setup Guide &amp; Download Manual</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const cleanDom =
+                          branchDraft.domain
+                            .trim()
+                            .toLowerCase()
+                            .replace(/^https?:\/\//i, '')
+                            .replace(/^www\./, '') || 'branchvw.co.za';
+                        const senderEmail = `web@${cleanDom}`;
+                        const branchSlug =
+                          branchDraft.id
+                            .toUpperCase()
+                            .replace(/[^A-Z0-9]+/g, '_')
+                            .replace(/^_+|_+$/g, '') || 'MAIN';
+                        setBranchDraft({
+                          ...branchDraft,
+                          smtpHost: branchDraft.smtpHost?.trim() || `mail.${cleanDom}`,
+                          smtpPort: branchDraft.smtpPort || 465,
+                          smtpUser: senderEmail,
+                          smtpFrom: `${branchDraft.name || 'Dealership'} <${senderEmail}>`,
+                          defaultNotifyEmail:
+                            branchDraft.defaultNotifyEmail?.trim() ||
+                            branchDraft.email.trim() ||
+                            `leads@${cleanDom}`,
+                          smtpPassEnvKey:
+                            branchDraft.smtpPassEnvKey?.trim() ||
+                            `SMTP_PASS_BRANCH_${branchSlug}`,
+                        });
+                      }}
+                    >
+                      Auto-Fill from Domain
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={testingEmail}
+                      onClick={async () => {
+                        if (!user) return;
+                        setTestingEmail(true);
+                        setEmailStatusError(null);
+                        setTestEmailResult(null);
+                        try {
+                          const token = await user.getIdToken();
+                          const response = await fetch('/api/notify-lead/test', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              Authorization: `Bearer ${token}`,
+                            },
+                            body: JSON.stringify({
+                              branchId: branchDraft.id,
+                              targetEmail:
+                                branchDraft.defaultNotifyEmail?.trim() ||
+                                branchDraft.salesNotifyEmail?.trim() ||
+                                undefined,
+                            }),
+                          });
+                          const data = await response.json();
+                          if (!response.ok) {
+                            throw new Error(data?.error || 'Unable to send branch test email.');
+                          }
+                          showFlash(
+                            `Sent branch test email from ${data.from} to ${data.to}.`
+                          );
+                        } catch (err) {
+                          setBranchSaveError(
+                            err instanceof Error ? err.message : 'Unable to send branch test email.'
+                          );
+                        } finally {
+                          setTestingEmail(false);
+                        }
+                      }}
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      <span>{testingEmail ? 'Testing...' : 'Send Branch Test Email'}</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <Label>SMTP Host (SMTP_HOST) *</Label>
+                    <Input
+                      value={branchDraft.smtpHost ?? ''}
+                      placeholder="mail.ladysmithvw.co.za or smtp.gmail.com"
+                      onChange={(e) => setBranchDraft({ ...branchDraft, smtpHost: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>SMTP Port (SMTP_PORT) *</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={branchDraft.smtpPort ?? 465}
+                      placeholder="465"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, smtpPort: Number(e.target.value) || 465 })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Sender Mailbox / Login (SMTP_USER) *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.smtpUser ?? ''}
+                      placeholder="web@ladysmithvw.co.za"
+                      onChange={(e) => setBranchDraft({ ...branchDraft, smtpUser: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Sender Display Header (SMTP_FROM) *</Label>
+                    <Input
+                      value={branchDraft.smtpFrom ?? ''}
+                      placeholder="Ladysmith Volkswagen <web@ladysmithvw.co.za>"
+                      onChange={(e) => setBranchDraft({ ...branchDraft, smtpFrom: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Default Branch Lead Inbox (DEFAULT_LEAD_NOTIFY_EMAIL) *</Label>
+                    <Input
+                      type="email"
+                      value={branchDraft.defaultNotifyEmail ?? ''}
+                      placeholder="leads@ladysmithvw.co.za"
+                      onChange={(e) =>
+                        setBranchDraft({ ...branchDraft, defaultNotifyEmail: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>Password Secret Variable (SMTP_PASS Key) *</Label>
+                    <Input
+                      value={
+                        branchDraft.smtpPassEnvKey ??
+                        `SMTP_PASS_BRANCH_${branchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`
+                      }
+                      placeholder="SMTP_PASS_BRANCH_LADYSMITH"
+                      onChange={(e) =>
+                        setBranchDraft({
+                          ...branchDraft,
+                          smtpPassEnvKey: e.target.value
+                            .toUpperCase()
+                            .replace(/[^A-Z0-9_]/g, ''),
+                        })
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#CBD5E1] bg-white px-4 py-3 text-xs text-[#334155]">
+                  <div className="flex items-start gap-2">
+                    <Lock className="h-4 w-4 text-[#001E50] mt-0.5 shrink-0" />
+                    <span>
+                      <strong>SMTP_PASS Security:</strong> To keep mail passwords private from website visitors, add{' '}
+                      <code className="rounded bg-[#F1F5F9] px-1.5 py-0.5 font-semibold text-[#001E50]">
+                        {branchDraft.smtpPassEnvKey || `SMTP_PASS_BRANCH_${branchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`}
+                      </code>{' '}
+                      in AI Studio <strong>Settings &rarr; Secrets</strong> or your server&apos;s <code>.env</code> file.
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const passKey =
+                        branchDraft.smtpPassEnvKey ||
+                        `SMTP_PASS_BRANCH_${branchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+                      const block = [
+                        `SMTP_HOST="${branchDraft.smtpHost || ''}"`,
+                        `SMTP_PORT="${branchDraft.smtpPort || 465}"`,
+                        `SMTP_USER="${branchDraft.smtpUser || ''}"`,
+                        `${passKey}="PASTE_MAILBOX_PASSWORD_HERE"`,
+                        `SMTP_FROM="${branchDraft.smtpFrom || ''}"`,
+                        `DEFAULT_LEAD_NOTIFY_EMAIL="${branchDraft.defaultNotifyEmail || ''}"`,
+                      ].join('\n');
+                      void copyText(`branch-env-${branchDraft.id}`, block);
+                    }}
+                  >
+                    {copiedKey === `branch-env-${branchDraft.id}` ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                    <span>
+                      {copiedKey === `branch-env-${branchDraft.id}`
+                        ? 'Copied .env Block!'
+                        : 'Copy Branch .env Block'}
+                    </span>
+                  </Button>
                 </div>
               </div>
 
@@ -5025,6 +5596,292 @@ export function AdminPortalPage() {
               />
             </div>
 
+            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-display text-xs font-semibold uppercase tracking-wider text-[#091224]">
+                    Department Request Notification Emails (Required)
+                  </h4>
+                  <p className="text-[11px] text-[#64748B]">
+                    Assign department recipients to automatically receive customer requests via email.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const fallback =
+                      newBranchDraft.email.trim() ||
+                      groupProfile.defaultNotifyEmail?.trim() ||
+                      '';
+                    if (!fallback) {
+                      setAddBranchError('Enter the Enquiries Email above first to auto-fill.');
+                      return;
+                    }
+                    setAddBranchError(null);
+                    setNewBranchDraft({
+                      ...newBranchDraft,
+                      salesNotifyEmail: fallback,
+                      serviceNotifyEmail: fallback,
+                      partsNotifyEmail: fallback,
+                      financeNotifyEmail: fallback,
+                      generalNotifyEmail: fallback,
+                    });
+                  }}
+                >
+                  Use Enquiries Email for All
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>Sales &amp; Test-Drive Email *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.salesNotifyEmail ?? ''}
+                    placeholder="sales@ladysmithvw.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, salesNotifyEmail: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Service Booking Email *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.serviceNotifyEmail ?? ''}
+                    placeholder="service@ladysmithvw.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, serviceNotifyEmail: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Parts Enquiries Email *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.partsNotifyEmail ?? ''}
+                    placeholder="parts@ladysmithvw.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, partsNotifyEmail: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Finance Applications Email *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.financeNotifyEmail ?? ''}
+                    placeholder="finance@ladysmithvw.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, financeNotifyEmail: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>General Enquiries, Events &amp; Competitions Email *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.generalNotifyEmail ?? ''}
+                    placeholder="enquiries@ladysmithvw.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, generalNotifyEmail: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* New Branch Outgoing Email Server (Nodemailer SMTP - Required) */}
+            <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF]/60 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-display text-xs font-semibold uppercase tracking-wider text-[#091224] flex items-center gap-1.5">
+                    <Server className="h-3.5 w-3.5 text-[#001E50]" />
+                    <span>Branch Outgoing Email Server (Nodemailer SMTP — Required)</span>
+                  </h4>
+                  <p className="text-[11px] text-[#475569]">
+                    Sets the branch sender address (e.g. <code>web@ladysmithvw.co.za</code>) used to email customer requests.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSmtpGuideTarget('newBranch')}
+                  >
+                    <HelpCircle className="h-3.5 w-3.5" />
+                    <span>Help / Setup Guide</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const cleanDom =
+                        newBranchDraft.domain
+                          .trim()
+                          .toLowerCase()
+                          .replace(/^https?:\/\//i, '')
+                          .replace(/^www\./, '') || 'ladysmithvolkswagen.co.za';
+                      const senderEmail = `web@${cleanDom}`;
+                      const branchSlug =
+                        newBranchDraft.id
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9]+/g, '_')
+                          .replace(/^_+|_+$/g, '') || 'NEW';
+                      setAddBranchError(null);
+                      setNewBranchDraft({
+                        ...newBranchDraft,
+                        smtpHost: `mail.${cleanDom}`,
+                        smtpPort: 465,
+                        smtpUser: senderEmail,
+                        smtpFrom: `${newBranchDraft.name.trim() || 'Dealership'} <${senderEmail}>`,
+                        defaultNotifyEmail:
+                          newBranchDraft.email.trim() || `leads@${cleanDom}`,
+                        smtpPassEnvKey: `SMTP_PASS_BRANCH_${branchSlug}`,
+                      });
+                    }}
+                  >
+                    Auto-Fill from Domain
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label>SMTP Host (SMTP_HOST) *</Label>
+                  <Input
+                    value={newBranchDraft.smtpHost ?? ''}
+                    placeholder="mail.ladysmithvolkswagen.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, smtpHost: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>SMTP Port (SMTP_PORT) *</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={newBranchDraft.smtpPort ?? 465}
+                    placeholder="465"
+                    onChange={(e) =>
+                      setNewBranchDraft({
+                        ...newBranchDraft,
+                        smtpPort: Number(e.target.value) || 465,
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Branch Sender Email / Login (SMTP_USER) *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.smtpUser ?? ''}
+                    placeholder="web@ladysmithvolkswagen.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, smtpUser: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Sender Display Header (SMTP_FROM) *</Label>
+                  <Input
+                    value={newBranchDraft.smtpFrom ?? ''}
+                    placeholder="Ladysmith Volkswagen <web@ladysmithvolkswagen.co.za>"
+                    onChange={(e) =>
+                      setNewBranchDraft({ ...newBranchDraft, smtpFrom: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Default Branch Lead Inbox (DEFAULT_LEAD_NOTIFY_EMAIL) *</Label>
+                  <Input
+                    type="email"
+                    value={newBranchDraft.defaultNotifyEmail ?? ''}
+                    placeholder="leads@ladysmithvolkswagen.co.za"
+                    onChange={(e) =>
+                      setNewBranchDraft({
+                        ...newBranchDraft,
+                        defaultNotifyEmail: e.target.value,
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Password Secret Variable (SMTP_PASS Key) *</Label>
+                  <Input
+                    value={
+                      newBranchDraft.smtpPassEnvKey ??
+                      `SMTP_PASS_BRANCH_${newBranchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`
+                    }
+                    placeholder="SMTP_PASS_BRANCH_LADYSMITH"
+                    onChange={(e) =>
+                      setNewBranchDraft({
+                        ...newBranchDraft,
+                        smtpPassEnvKey: e.target.value
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9_]/g, ''),
+                      })
+                    }
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#CBD5E1] bg-white px-3 py-2.5 text-[11px] text-[#334155]">
+                <span>
+                  After registering, add{' '}
+                  <code className="rounded bg-[#F1F5F9] px-1 py-0.5 font-semibold text-[#001E50]">
+                    {newBranchDraft.smtpPassEnvKey || `SMTP_PASS_BRANCH_${newBranchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`}
+                  </code>{' '}
+                  in <strong>Settings &rarr; Secrets</strong> or <code>.env</code> so passwords stay off the public database.
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const passKey =
+                      newBranchDraft.smtpPassEnvKey ||
+                      `SMTP_PASS_BRANCH_${newBranchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+                    const block = [
+                      `SMTP_HOST="${newBranchDraft.smtpHost || ''}"`,
+                      `SMTP_PORT="${newBranchDraft.smtpPort || 465}"`,
+                      `SMTP_USER="${newBranchDraft.smtpUser || ''}"`,
+                      `${passKey}="PASTE_MAILBOX_PASSWORD_HERE"`,
+                      `SMTP_FROM="${newBranchDraft.smtpFrom || ''}"`,
+                      `DEFAULT_LEAD_NOTIFY_EMAIL="${newBranchDraft.defaultNotifyEmail || ''}"`,
+                    ].join('\n');
+                    void copyText('new-branch-env', block);
+                  }}
+                >
+                  {copiedKey === 'new-branch-env' ? (
+                    <Check className="h-3 w-3 text-emerald-600" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                  <span>
+                    {copiedKey === 'new-branch-env' ? 'Copied!' : 'Copy .env Block'}
+                  </span>
+                </Button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <Label>Facebook Page URL (Optional)</Label>
@@ -5069,6 +5926,79 @@ export function AdminPortalPage() {
           </form>
         </Dialog>
       )}
+
+      {/* Mini Help Window & Downloadable Guide for Branch Nodemailer SMTP Setup */}
+      <SmtpSetupGuideModal
+        open={Boolean(smtpGuideTarget)}
+        onClose={() => setSmtpGuideTarget(null)}
+        branchName={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.name || 'New Dealership Branch'
+            : branchDraft.name
+        }
+        branchDomain={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.domain || ''
+            : branchDraft.domain
+        }
+        smtpHost={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.smtpHost
+            : branchDraft.smtpHost
+        }
+        smtpPort={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.smtpPort
+            : branchDraft.smtpPort
+        }
+        smtpUser={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.smtpUser
+            : branchDraft.smtpUser
+        }
+        smtpFrom={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.smtpFrom
+            : branchDraft.smtpFrom
+        }
+        defaultNotifyEmail={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.defaultNotifyEmail
+            : smtpGuideTarget === 'group'
+            ? groupDraft.defaultNotifyEmail
+            : branchDraft.defaultNotifyEmail
+        }
+        smtpPassEnvKey={
+          smtpGuideTarget === 'newBranch'
+            ? newBranchDraft?.smtpPassEnvKey
+            : smtpGuideTarget === 'group'
+            ? 'SMTP_PASS'
+            : branchDraft.smtpPassEnvKey
+        }
+        onApplyPreset={
+          smtpGuideTarget === 'group'
+            ? undefined
+            : (preset: SmtpPresetSelection) => {
+                if (smtpGuideTarget === 'newBranch' && newBranchDraft) {
+                  setNewBranchDraft({
+                    ...newBranchDraft,
+                    smtpHost: preset.smtpHost,
+                    smtpPort: preset.smtpPort,
+                    smtpUser: preset.smtpUser,
+                    smtpFrom: preset.smtpFrom,
+                  });
+                } else if (smtpGuideTarget === 'editBranch') {
+                  setBranchDraft({
+                    ...branchDraft,
+                    smtpHost: preset.smtpHost,
+                    smtpPort: preset.smtpPort,
+                    smtpUser: preset.smtpUser,
+                    smtpFrom: preset.smtpFrom,
+                  });
+                }
+              }
+        }
+      />
     </div>
   );
 }

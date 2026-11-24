@@ -16,6 +16,7 @@ export interface DealershipGroupProfile {
   emblemLogoSrc: string;
   youtubeUrl: string;
   defaultBranchId: DealershipId;
+  defaultNotifyEmail?: string;
   updatedAt?: unknown;
   updatedBy?: string;
 }
@@ -49,6 +50,17 @@ export interface DealershipRecord {
   syncEnabled: boolean;
   archived?: boolean;
   sortOrder?: number;
+  salesNotifyEmail?: string;
+  serviceNotifyEmail?: string;
+  partsNotifyEmail?: string;
+  financeNotifyEmail?: string;
+  generalNotifyEmail?: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpFrom?: string;
+  defaultNotifyEmail?: string;
+  smtpPassEnvKey?: string;
   updatedAt?: unknown;
   updatedBy?: string;
 }

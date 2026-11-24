@@ -26,7 +26,8 @@ A single white-label codebase powers any Volkswagen dealership group—whether y
   - **Marketing Coordinator (`marketing`)**: Group-wide management of **Motoring News** (`newsArticles`) and **Promotions** (`special`, `event`, `competition` across Master Group and all branches).
   - **Parts Sales Executive (`parts`)**: Branch-scoped **Parts Leads** inbox (status updates only, no deletion) and branch department `special` campaigns.
   - **Service Booking Clerk (`service`)**: Branch-scoped **Service Leads** inbox (status updates only, no deletion) and branch department `special` campaigns.
-- **First-Login Password Gate & One-Click Welcome Onboarding**: New staff receive a generated temporary password and must choose a personal password on first sign-in. After adding a staff member, `/admin` generates a ready-to-send welcome message with one-click **WhatsApp**, **Email App (`mailto:`)**, and **Copy** buttons (no SMTP or email API keys required).
+- **First-Login Password Gate & One-Click Welcome Onboarding**: New staff receive a generated temporary password and must choose a personal password on first sign-in. After adding a staff member, `/admin` generates a ready-to-send welcome message with one-click **WhatsApp**, **Email App (`mailto:`)**, and **Copy** buttons.
+- **Automatic Customer Request Email Routing (Nodemailer SMTP)**: Customer submissions (Test Drives, Service Bookings, Parts Enquiries, Finance Applications, Vehicle Enquiries, Contact forms, Events, and Competitions) are automatically dispatched via Express (`POST /api/notify-lead`) to the department notification email configured on the target branch (`salesNotifyEmail`, `serviceNotifyEmail`, `partsNotifyEmail`, `financeNotifyEmail`, `generalNotifyEmail`) or group fallback (`defaultNotifyEmail`).
 - **Aftersales, Finance & Campaign Management**: Validated Service & Parts booking forms, test-drive hour rules, interactive ZAR finance calculator, auto-archiving campaigns, and Motoring News.
 
 ---
@@ -117,8 +118,14 @@ cp .env.example .env
 | `PORT` | Optional | Port for Express (`server.ts`) | `3000` |
 | `APP_URL` | Optional | Public URL of your site | `https://www.yourdealership.co.za` |
 | `DECODO_API_KEY` | Optional | Your own Decodo API key for `/api/autotrader-scrape` | Leave blank if unused; never prefix with `VITE_` |
+| `SMTP_HOST` | Optional | Outgoing mail server host (defaults to `smtp.gmail.com`) | `smtp.gmail.com` or `smtp.office365.com` |
+| `SMTP_PORT` | Optional | Outgoing SMTP port (`465` SSL/TLS or `587` STARTTLS) | `465` |
+| `SMTP_USER` | Recommended | SMTP login email (defaults to `BOOTSTRAPPED_ADMIN_EMAIL` if omitted) | `noreply@yourdealership.co.za` |
+| `SMTP_PASS` | Required for Email Alerts | Server-only SMTP password or 16-char Gmail App Password (never prefix with `VITE_`). Each branch can also define its own secret key (e.g. `SMTP_PASS_BRANCH_LADYSMITH`). | Store in AI Studio **Settings → Secrets** or `.env` |
+| `SMTP_FROM` | Optional | Friendly From header (defaults to `Dealership Requests <SMTP_USER>`) | `Your VW Group <noreply@yourdealership.co.za>` |
+| `DEFAULT_LEAD_NOTIFY_EMAIL` | Optional | Emergency fallback recipient if branch/group emails are empty | `leads@yourdealership.co.za` |
 
-> **No email/SMTP environment variables are needed.** Welcome messages with temporary passwords are handed off via one-click **WhatsApp**, **Email App**, or **Copy** inside `/admin`.
+> Staff welcome onboarding still requires zero email credentials (using one-click **WhatsApp**, **Email App**, or **Copy**). Customer request email alerts run via Nodemailer when `SMTP_PASS` (or per-branch `SMTP_PASS_BRANCH_<ID>`) is set, and every branch configures its own outgoing identity (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`) plus a downloadable **Dealer Principal Setup Guide** directly inside `/admin` → **Group & Branches**.
 
 ### Step 6: Update Static Fallbacks & Run Locally
 
@@ -149,5 +156,6 @@ For complete instructions on deploying via **Docker / Docker Compose**, **Linux 
 - [ ] Replaced `smokeydhlamini@gmail.com` in `/firestore.rules`, `/src/lib/firebase.ts`, and `/server.ts`.
 - [ ] Validated (`npx eslint firestore.rules`) and deployed `/firestore.rules` to **your** Firebase project.
 - [ ] Enabled **Google** + **Email/Password** authentication and registered your live domains in Firebase Console.
-- [ ] Created your own `.env` (no original owner keys or secrets).
-- [ ] Configured your Group Corporate Profile, branches, and staff accounts inside `/admin` (`Group & Branches` and `Users & Roles`).
+- [ ] Created your own `.env` (no original owner keys, passwords, or secrets).
+- [ ] Configured `SMTP_USER` / `SMTP_PASS` in `.env` (or AI Studio Secrets) and verified **Send Test Email** in `/admin` → **Group & Branches**.
+- [ ] Configured your Group Corporate Profile (including `Default Lead Notification Email`), branches (including all 5 required department routing emails), and staff accounts inside `/admin` (`Group & Branches` and `Users & Roles`).

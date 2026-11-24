@@ -120,8 +120,14 @@ cp .env.example .env
 | `PORT` | No | `3000` | Port Express listens on inside the container/server |
 | `APP_URL` | No | `http://localhost:3000` | Public canonical URL of your deployment |
 | `DECODO_API_KEY` | No | *(empty)* | Optional server-side Decodo Web Data API key for automated AutoTrader scraping (`POST /api/autotrader-scrape`). Never prefix with `VITE_`. |
+| `SMTP_HOST` | No | `smtp.gmail.com` | Corporate SMTP relay hostname (Google Workspace / Gmail, Microsoft 365, Postmark, or on-prem SMTP) |
+| `SMTP_PORT` | No | `465` | SMTP port (`465` uses TLS/SSL; `587` uses STARTTLS) |
+| `SMTP_USER` | For Email Alerts | `BOOTSTRAPPED_ADMIN_EMAIL` | Authenticated SMTP mailbox/username used to send customer request notifications |
+| `SMTP_PASS` | For Email Alerts | *(empty)* | Server-only SMTP password or Gmail 16-character App Password. When a branch uses its own mailbox (e.g. `web@ladysmithvw.co.za`), add the branch's secret variable shown in `/admin` (e.g. `SMTP_PASS_BRANCH_LADYSMITH`). Never prefix with `VITE_`. |
+| `SMTP_FROM` | No | `Dealership Requests <SMTP_USER>` | Sender display name and address shown on lead notification emails |
+| `DEFAULT_LEAD_NOTIFY_EMAIL` | No | `BOOTSTRAPPED_ADMIN_EMAIL` | Final fallback recipient if a branch/group notification email is missing |
 
-> **No SMTP or Email API credentials are required.** When an Administrator creates a staff user in `/admin`, the portal generates a ready-to-send welcome message containing the sign-in link, username (email), role scope, and temporary password with one-click **Send via WhatsApp**, **Open Email App (`mailto:`)**, and **Copy** buttons.
+> **Note:** Staff account onboarding uses one-click **Send via WhatsApp**, **Open Email App (`mailto:`)**, and **Copy** buttons inside `/admin`. Customer request alerts (Test Drives, Service Bookings, Parts Enquiries, Finance Applications, Contact forms, Events, and Competitions) are dispatched server-side via Nodemailer (`POST /api/notify-lead`) using each branch's own outgoing SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`) and department routing emails stored in Firestore.
 
 ---
 
@@ -317,7 +323,7 @@ If you prefer pure static web hosting without Node.js at runtime:
    - **Apache / cPanel**: upload the contents of `dist/` into `public_html/`. `public/.htaccess` is automatically copied into `dist/` to handle SPA routes (`/vehicles`, `/admin`, `/service`, etc.).
    - **Nginx static site**: add `try_files $uri $uri/ /index.html;` inside `location /`.
 
-> **Note:** Static hosting does not run the Express `POST /api/autotrader-scrape` endpoint. Staff continue to manage inventory seamlessly via manual vehicle creation and the built-in **Paste AutoTrader JSON / HTML** importer inside `/admin`.
+> **Note:** Static hosting does not run the Express `server.ts` backend (`/api/autotrader-scrape`, `/api/upload-media`, or `/api/notify-lead` SMTP emails). For automatic customer email notifications and direct media uploads, deploy Option A (Docker) or Option B (PM2 + Nginx).
 
 ---
 
@@ -328,8 +334,8 @@ Once your instance is live and reachable over HTTPS:
 1. Navigate to `https://your-primary-domain/admin` and click **Administrator Google Sign-In** using the Google account you configured in Section 2.2.
 2. Click **Seed / Reset Default Group Data** in the Admin header to initialize `/groupSettings/main`, baseline branches, sample campaigns, and news (or skip straight to registering your own branches).
 3. Open **Group & Branches** in the Admin Portal:
-   - **Dealership Group Corporate Profile**: Configure your `Group Name`, `Legal Entity`, `FSP Number`, `Compliance Officer`, `Compliance Email`, `VW Roadside Assist` numbers, `Test Drive Hours Summary`, `Group Logo URL`, `VW Emblem URL`, `YouTube Channel`, and `Default Fallback Branch`.
-   - **Register New Dealership Branch**: Click **Add Branch** to register as many branches as your group operates (**1, 2, 3, 4, or more**)—complete with branch ID, 2–4 letter Reference Code (e.g. `DBN`, `PMB`, `PTA`), domain name, physical/postal address, contact details, trading hours, social links, and optional AutoTrader Dealer ID.
+   - **Dealership Group Corporate Profile**: Configure your `Group Name`, `Legal Entity`, `FSP Number`, `Compliance Officer`, `Compliance Email`, `Default Lead Notification Email`, `VW Roadside Assist` numbers, `Test Drive Hours Summary`, `Group Logo`, `VW Emblem`, `YouTube Channel`, and `Default Fallback Branch`. Use the **Automatic Customer Request Emails (Nodemailer SMTP)** panel to verify `SMTP_PASS` is detected and send a live test email.
+   - **Register New Dealership Branch**: Click **Add New Branch** to register as many branches as your group operates (**1, 2, 3, 4, or more**)—complete with branch ID, 2–4 letter Reference Code (e.g. `DBN`, `PMB`, `PTA`), domain name, physical/postal address, contact details, **all 5 required Department Customer Request Notification Emails**, **Branch Outgoing Email Server (Nodemailer SMTP)** (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`, and `SMTP_PASS` secret key), trading hours, social links, and optional AutoTrader Dealer ID. Click **Help / Setup Guide** inside the branch form at any time to view or download the **Dealer Principal Setup Guide** (`.html` printable PDF / `.md`).
    - **Archive or Safely Remove Default Branches**: Archive branches you don't need immediately, or permanently delete unused branches once no vehicles, branch-scoped promotions, or assigned staff reference them (built-in dependency protection prevents orphan records).
 4. Open **Users & Roles → Add Staff User** to onboard your dealership team across all 5 roles:
    - **Administrator** *(Group-Wide)*
@@ -346,7 +352,7 @@ Once your instance is live and reachable over HTTPS:
 Before handing the live site to staff and customers, confirm:
 
 - [ ] Visiting each branch domain (or `/?branch=<id>`) displays the correct dealership name, address, phone numbers, social links, and SEO tags.
-- [ ] Submitting a Service Booking, Parts Inquiry, Finance Application, and Vehicle Inquiry creates a lead in `/admin` under the corresponding branch.
+- [ ] Submitting a Service Booking, Parts Inquiry, Finance Application, and Vehicle Inquiry creates a lead in `/admin` under the corresponding branch and delivers an email notification to the assigned department address (when `SMTP_PASS` is configured).
 - [ ] Signing in as each non-admin role (`agent`, `marketing`, `parts`, `service`) enforces first-login password setup and isolates portal access to that role's authorized scope.
 - [ ] All Firebase Console **Authorized domains** include every live branch domain (`www.` and apex domains).
 - [ ] Automated HTTPS certificate renewal (`certbot renew --dry-run`) succeeds on bare-metal/Nginx hosts.

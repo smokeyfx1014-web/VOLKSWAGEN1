@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import nodemailer from 'nodemailer';
 import { getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { type DecodedIdToken, getAuth } from 'firebase-admin/auth';
 import {
@@ -45,7 +46,15 @@ const adminApp =
 const adminAuth = getAuth(adminApp);
 
 interface FirestoreRestDoc {
-  fields?: Record<string, { stringValue?: string; booleanValue?: boolean }>;
+  fields?: Record<
+    string,
+    {
+      stringValue?: string;
+      booleanValue?: boolean;
+      integerValue?: string | number;
+      doubleValue?: number;
+    }
+  >;
 }
 
 async function fetchOwnFirestoreDoc(
@@ -158,6 +167,209 @@ const VIDEO_MIME_EXT: Record<string, string> = {
 };
 const MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024;
 const MAX_VIDEO_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+const EMAIL_SIMPLE_RE = /^[^\s@<>()[\],;:"\\]+@[^\s@<>()[\],;:"\\]+\.[^\s@<>()[\],;:"\\]{2,}$/;
+const VALID_LEAD_TYPES = new Set([
+  'test-drive',
+  'service',
+  'parts',
+  'finance',
+  'vehicle-inquiry',
+  'contact',
+  'event-rsvp',
+  'competition-entry',
+]);
+const VALID_BRANCH_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+const LEAD_TYPE_LABELS: Record<string, string> = {
+  'test-drive': 'Test Drive Request',
+  service: 'Service Booking Request',
+  parts: 'Parts Enquiry',
+  finance: 'Finance Application',
+  'vehicle-inquiry': 'Vehicle Sales Enquiry',
+  contact: 'General Contact Enquiry',
+  'event-rsvp': 'Event RSVP',
+  'competition-entry': 'Competition Entry',
+};
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function stripCrlf(raw: string): string {
+  return raw.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function sanitizeEmailAddr(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const cleaned = stripCrlf(raw).slice(0, 140);
+  if (!cleaned || !EMAIL_SIMPLE_RE.test(cleaned)) return null;
+  return cleaned;
+}
+
+async function fetchPublicFirestoreDoc(
+  collectionPath: 'groupSettings' | 'dealerships',
+  docId: string
+): Promise<FirestoreRestDoc | null> {
+  if (!VALID_BRANCH_ID_RE.test(docId)) return null;
+  const endpoint = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+    firebaseConfig.projectId
+  )}/databases/${encodeURIComponent(
+    firebaseConfig.firestoreDatabaseId
+  )}/documents/${collectionPath}/${encodeURIComponent(docId)}`;
+
+  const response = await fetch(endpoint, { signal: AbortSignal.timeout(6000) });
+  if (!response.ok) return null;
+  return (await response.json()) as FirestoreRestDoc;
+}
+
+const VALID_SMTP_PASS_KEY_RE = /^SMTP_PASS(?:_[A-Z0-9_]{1,40})?$/;
+
+function deriveBranchSmtpPassKey(branchId: string, configuredKey?: string): string {
+  const cleanedConfigured = (configuredKey || '').trim().toUpperCase();
+  if (cleanedConfigured && VALID_SMTP_PASS_KEY_RE.test(cleanedConfigured)) {
+    return cleanedConfigured;
+  }
+  const normalizedBranch =
+    branchId
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 32) || 'MAIN';
+  return `SMTP_PASS_BRANCH_${normalizedBranch}`;
+}
+
+function getSmtpConfig() {
+  const host = stripCrlf(process.env.SMTP_HOST || 'smtp.gmail.com');
+  const port = Number(process.env.SMTP_PORT || 465);
+  const user = sanitizeEmailAddr(process.env.SMTP_USER) || BOOTSTRAPPED_ADMIN_EMAIL;
+  const pass = (process.env.SMTP_PASS || '').trim();
+  const fromRaw = stripCrlf(process.env.SMTP_FROM || '');
+  const from = fromRaw || `Dealership Requests <${user}>`;
+  const defaultNotify =
+    sanitizeEmailAddr(process.env.DEFAULT_LEAD_NOTIFY_EMAIL) || BOOTSTRAPPED_ADMIN_EMAIL;
+
+  return {
+    configured: Boolean(pass && pass !== 'YOUR_GMAIL_APP_PASSWORD'),
+    host,
+    port: Number.isFinite(port) && port > 0 ? port : 465,
+    secure: (Number.isFinite(port) && port > 0 ? port : 465) === 465,
+    user,
+    pass,
+    from,
+    defaultNotify,
+  };
+}
+
+function resolveBranchSmtpConfig(branchId: string, branchDoc: FirestoreRestDoc | null) {
+  const globalSmtp = getSmtpConfig();
+  const branchName = stripCrlf(branchDoc?.fields?.name?.stringValue || `Branch ${branchId}`);
+  const branchHost = stripCrlf(branchDoc?.fields?.smtpHost?.stringValue || '');
+  const rawPortField = branchDoc?.fields?.smtpPort;
+  const parsedBranchPort = Number(rawPortField?.integerValue ?? rawPortField?.doubleValue ?? 0);
+  const branchUser = sanitizeEmailAddr(branchDoc?.fields?.smtpUser?.stringValue);
+  const branchFrom = stripCrlf(branchDoc?.fields?.smtpFrom?.stringValue || '');
+  const branchDefaultNotify = sanitizeEmailAddr(
+    branchDoc?.fields?.defaultNotifyEmail?.stringValue
+  );
+  const branchPassKey = deriveBranchSmtpPassKey(
+    branchId,
+    branchDoc?.fields?.smtpPassEnvKey?.stringValue
+  );
+
+  const specificPass = (process.env[branchPassKey] || '').trim();
+  const hasSpecificSecret = Boolean(specificPass && specificPass !== 'YOUR_GMAIL_APP_PASSWORD');
+
+  const configuredHost = branchHost || globalSmtp.host;
+  const configuredPort =
+    Number.isFinite(parsedBranchPort) && parsedBranchPort >= 1 && parsedBranchPort <= 65535
+      ? Math.round(parsedBranchPort)
+      : globalSmtp.port;
+  const configuredUser = branchUser || globalSmtp.user;
+  const configuredFrom = branchFrom || `${branchName} <${configuredUser}>`;
+  const sharesGlobalMailbox =
+    !branchUser || branchUser.toLowerCase() === globalSmtp.user.toLowerCase();
+  const branchSecretConfigured =
+    hasSpecificSecret || (sharesGlobalMailbox && globalSmtp.configured);
+
+  let activeHost = configuredHost;
+  let activePort = configuredPort;
+  let activeSecure = configuredPort === 465;
+  let activeUser = configuredUser;
+  let activePass = '';
+  let activeFrom = configuredFrom;
+  let usedFallback = false;
+
+  if (hasSpecificSecret) {
+    activePass = specificPass;
+  } else if (sharesGlobalMailbox && globalSmtp.configured) {
+    activePass = globalSmtp.pass;
+  } else if (globalSmtp.configured) {
+    activePass = globalSmtp.pass;
+    activeHost = globalSmtp.host;
+    activePort = globalSmtp.port;
+    activeSecure = globalSmtp.secure;
+    activeUser = globalSmtp.user;
+    activeFrom = globalSmtp.from;
+    usedFallback = true;
+  }
+
+  return {
+    globalConfigured: globalSmtp.configured,
+    globalDefaultNotify: globalSmtp.defaultNotify,
+    branchPassKey,
+    branchSecretConfigured,
+    effectiveReady: Boolean(activePass),
+    usedFallback,
+    host: activeHost,
+    port: activePort,
+    secure: activeSecure,
+    user: activeUser,
+    pass: activePass,
+    from: activeFrom,
+    branchConfiguredHost: configuredHost,
+    branchConfiguredPort: configuredPort,
+    branchConfiguredUser: configuredUser,
+    branchConfiguredFrom: configuredFrom,
+    branchDefaultNotify,
+  };
+}
+
+function resolveBranchEmailField(leadType: string): string {
+  switch (leadType) {
+    case 'service':
+      return 'serviceNotifyEmail';
+    case 'parts':
+      return 'partsNotifyEmail';
+    case 'test-drive':
+    case 'vehicle-inquiry':
+      return 'salesNotifyEmail';
+    case 'finance':
+      return 'financeNotifyEmail';
+    default:
+      return 'generalNotifyEmail';
+  }
+}
+
+const leadNotifyBuckets = new Map<string, number[]>();
+function allowLeadEmailRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000; // 10 minutes
+  const maxPerWindow = 10;
+  const recent = (leadNotifyBuckets.get(ip) || []).filter((ts) => now - ts < windowMs);
+  if (recent.length >= maxPerWindow) {
+    leadNotifyBuckets.set(ip, recent);
+    return false;
+  }
+  recent.push(now);
+  leadNotifyBuckets.set(ip, recent);
+  return true;
+}
 
 interface ScrapeBranchInput {
   id: DealershipId;
@@ -437,6 +649,316 @@ async function createServer() {
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Unable to execute AutoTrader scrape.',
+      });
+    }
+  });
+
+  app.get('/api/email-status', async (req, res) => {
+    const authCheck = await verifyAdminCaller(req);
+    if (!authCheck.ok) {
+      res.status(authCheck.status).json({ error: authCheck.error });
+      return;
+    }
+    const smtp = getSmtpConfig();
+    const rawBranchId = typeof req.query.branchId === 'string' ? req.query.branchId.trim() : '';
+    let branchStatus: {
+      branchId: string;
+      branchPassKey: string;
+      branchSecretConfigured: boolean;
+      effectiveReady: boolean;
+      configuredHost: string;
+      configuredPort: number;
+      configuredUser: string;
+      configuredFrom: string;
+    } | null = null;
+
+    if (rawBranchId && VALID_BRANCH_ID_RE.test(rawBranchId)) {
+      const branchDoc = await fetchPublicFirestoreDoc('dealerships', rawBranchId).catch(() => null);
+      const resolved = resolveBranchSmtpConfig(rawBranchId, branchDoc);
+      branchStatus = {
+        branchId: rawBranchId,
+        branchPassKey: resolved.branchPassKey,
+        branchSecretConfigured: resolved.branchSecretConfigured,
+        effectiveReady: resolved.effectiveReady,
+        configuredHost: resolved.branchConfiguredHost,
+        configuredPort: resolved.branchConfiguredPort,
+        configuredUser: resolved.branchConfiguredUser,
+        configuredFrom: resolved.branchConfiguredFrom,
+      };
+    }
+
+    res.json({
+      configured: smtp.configured,
+      host: smtp.host,
+      port: smtp.port,
+      senderEmail: smtp.user,
+      defaultRecipient: smtp.defaultNotify,
+      branchStatus,
+    });
+  });
+
+  app.post('/api/notify-lead/test', async (req, res) => {
+    try {
+      const authCheck = await verifyAdminCaller(req);
+      if (!authCheck.ok) {
+        res.status(authCheck.status).json({ error: authCheck.error });
+        return;
+      }
+
+      const branchId =
+        typeof req.body?.branchId === 'string' && VALID_BRANCH_ID_RE.test(req.body.branchId)
+          ? req.body.branchId
+          : '1';
+      const [branchDoc, groupDoc] = await Promise.all([
+        fetchPublicFirestoreDoc('dealerships', branchId).catch(() => null),
+        fetchPublicFirestoreDoc('groupSettings', 'main').catch(() => null),
+      ]);
+
+      const resolvedSmtp = resolveBranchSmtpConfig(branchId, branchDoc);
+      if (!resolvedSmtp.branchSecretConfigured) {
+        res.status(503).json({
+          error: `Branch SMTP password secret "${resolvedSmtp.branchPassKey}" is not configured in server Secrets / .env yet for ${resolvedSmtp.branchConfiguredUser}. Add ${resolvedSmtp.branchPassKey} in Settings -> Secrets (or .env) and retry.`,
+        });
+        return;
+      }
+
+      const targetEmail =
+        sanitizeEmailAddr(req.body?.targetEmail) ||
+        sanitizeEmailAddr(branchDoc?.fields?.defaultNotifyEmail?.stringValue) ||
+        sanitizeEmailAddr(branchDoc?.fields?.salesNotifyEmail?.stringValue) ||
+        sanitizeEmailAddr(groupDoc?.fields?.defaultNotifyEmail?.stringValue) ||
+        resolvedSmtp.globalDefaultNotify;
+      const branchName = stripCrlf(
+        branchDoc?.fields?.name?.stringValue || `Branch ${branchId}`
+      );
+      const groupName = stripCrlf(
+        groupDoc?.fields?.groupName?.stringValue || 'Dealership Group'
+      );
+
+      const transporter = nodemailer.createTransport({
+        host: resolvedSmtp.host,
+        port: resolvedSmtp.port,
+        secure: resolvedSmtp.secure,
+        auth: { user: resolvedSmtp.user, pass: resolvedSmtp.pass },
+      });
+
+      await transporter.sendMail({
+        from: resolvedSmtp.from,
+        to: targetEmail,
+        subject: `[${groupName}] Test Email Notification Connected — ${branchName}`,
+        text: `Your dealership email notification server is connected.\n\nBranch: ${branchName}\nSMTP Host: ${resolvedSmtp.host}:${resolvedSmtp.port}\nFrom: ${resolvedSmtp.from}\nSMTP User: ${resolvedSmtp.user}\nRecipient: ${targetEmail}\nGroup: ${groupName}\n`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+            <div style="background: #001E50; color: #ffffff; padding: 20px 24px;">
+              <p style="margin: 0; font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.8;">${escapeHtml(groupName)}</p>
+              <h2 style="margin: 6px 0 0; font-size: 18px;">Branch Email Server Connected — ${escapeHtml(branchName)}</h2>
+            </div>
+            <div style="padding: 20px 24px; color: #0f172a; font-size: 14px; line-height: 1.6;">
+              <p style="margin-top: 0;">Your branch Nodemailer SMTP connection is verified and ready to dispatch customer requests.</p>
+              <p><strong>From Header:</strong> ${escapeHtml(resolvedSmtp.from)}<br/>
+              <strong>SMTP Server:</strong> ${escapeHtml(resolvedSmtp.host)}:${resolvedSmtp.port}<br/>
+              <strong>SMTP Login:</strong> ${escapeHtml(resolvedSmtp.user)}<br/>
+              <strong>Test Recipient:</strong> ${escapeHtml(targetEmail)}</p>
+            </div>
+          </div>
+        `,
+      });
+
+      res.json({ sent: true, to: targetEmail, from: resolvedSmtp.from, user: resolvedSmtp.user });
+    } catch (err) {
+      res.status(500).json({
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Unable to dispatch test email via SMTP.',
+      });
+    }
+  });
+
+  app.post('/api/notify-lead', async (req, res) => {
+    try {
+      const clientIp =
+        String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+          .split(',')[0]
+          .trim();
+      if (!allowLeadEmailRateLimit(clientIp)) {
+        res.status(429).json({ error: 'Too many notification requests. Please wait a few minutes.' });
+        return;
+      }
+
+      const leadType = typeof req.body?.leadType === 'string' ? req.body.leadType.trim() : '';
+      const fullName = stripCrlf(String(req.body?.fullName || '')).slice(0, 120);
+      const phone = stripCrlf(String(req.body?.phone || '')).slice(0, 30);
+      const customerEmail = sanitizeEmailAddr(req.body?.email);
+      const subject = stripCrlf(String(req.body?.subject || '')).slice(0, 200);
+      const details = String(req.body?.details || '').trim().slice(0, 6000);
+      const leadId = stripCrlf(String(req.body?.leadId || '')).slice(0, 128);
+      const submittedAtDealershipId =
+        typeof req.body?.submittedAtDealershipId === 'string' &&
+        VALID_BRANCH_ID_RE.test(req.body.submittedAtDealershipId)
+          ? req.body.submittedAtDealershipId
+          : '1';
+      const homeDealershipId =
+        typeof req.body?.homeDealershipId === 'string' &&
+        VALID_BRANCH_ID_RE.test(req.body.homeDealershipId)
+          ? req.body.homeDealershipId
+          : null;
+
+      if (!VALID_LEAD_TYPES.has(leadType) || fullName.length < 2 || phone.length < 7 || !customerEmail || subject.length < 2) {
+        res.status(400).json({ error: 'Invalid lead notification payload.' });
+        return;
+      }
+
+      // Resolve authoritative SMTP settings and recipient routing strictly from Firestore (never trust client-supplied target email)
+      const [submittedBranchDoc, homeBranchDoc, groupDoc] = await Promise.all([
+        fetchPublicFirestoreDoc('dealerships', submittedAtDealershipId).catch(() => null),
+        homeDealershipId && homeDealershipId !== submittedAtDealershipId
+          ? fetchPublicFirestoreDoc('dealerships', homeDealershipId).catch(() => null)
+          : Promise.resolve(null),
+        fetchPublicFirestoreDoc('groupSettings', 'main').catch(() => null),
+      ]);
+
+      const resolvedSmtp = resolveBranchSmtpConfig(submittedAtDealershipId, submittedBranchDoc);
+      if (!resolvedSmtp.effectiveReady) {
+        res.status(202).json({
+          delivered: false,
+          skipped: true,
+          reason: `Server email password (${resolvedSmtp.branchPassKey} or SMTP_PASS) is not configured yet.`,
+        });
+        return;
+      }
+
+      const deptField = resolveBranchEmailField(leadType);
+      const groupDefaultEmail =
+        sanitizeEmailAddr(groupDoc?.fields?.defaultNotifyEmail?.stringValue) ||
+        resolvedSmtp.globalDefaultNotify;
+      const branchFallbackEmail =
+        resolvedSmtp.branchDefaultNotify ||
+        sanitizeEmailAddr(submittedBranchDoc?.fields?.generalNotifyEmail?.stringValue) ||
+        groupDefaultEmail;
+
+      const recipients = new Set<string>();
+      const primaryDeptEmail =
+        sanitizeEmailAddr(submittedBranchDoc?.fields?.[deptField]?.stringValue) ||
+        branchFallbackEmail;
+      recipients.add(primaryDeptEmail);
+
+      if (homeBranchDoc) {
+        const homeDeptEmail =
+          sanitizeEmailAddr(homeBranchDoc.fields?.[deptField]?.stringValue) ||
+          sanitizeEmailAddr(homeBranchDoc.fields?.defaultNotifyEmail?.stringValue);
+        if (homeDeptEmail) {
+          recipients.add(homeDeptEmail);
+        }
+      }
+
+      const toList = Array.from(recipients);
+      const branchName = stripCrlf(
+        submittedBranchDoc?.fields?.name?.stringValue || `Branch ${submittedAtDealershipId}`
+      );
+      const homeBranchName = homeBranchDoc
+        ? stripCrlf(homeBranchDoc.fields?.name?.stringValue || `Branch ${homeDealershipId}`)
+        : homeDealershipId && homeDealershipId === submittedAtDealershipId
+        ? branchName
+        : null;
+      const groupName = stripCrlf(
+        groupDoc?.fields?.groupName?.stringValue || 'Dealership Group'
+      );
+      const leadLabel = LEAD_TYPE_LABELS[leadType] || 'Customer Request';
+
+      const transporter = nodemailer.createTransport({
+        host: resolvedSmtp.host,
+        port: resolvedSmtp.port,
+        secure: resolvedSmtp.secure,
+        auth: { user: resolvedSmtp.user, pass: resolvedSmtp.pass },
+      });
+
+      const emailSubject = `[${branchName}] New ${leadLabel}: ${subject}`;
+      const detailsHtml = escapeHtml(details || 'No additional notes provided.').replace(
+        /\n/g,
+        '<br/>'
+      );
+
+      await transporter.sendMail({
+        from: resolvedSmtp.from,
+        to: toList.join(', '),
+        replyTo: `${fullName} <${customerEmail}>`,
+        subject: emailSubject,
+        text: [
+          `${groupName} — ${leadLabel}`,
+          `Branch: ${branchName}`,
+          homeBranchName && homeBranchName !== branchName
+            ? `Vehicle / Target Branch: ${homeBranchName}`
+            : '',
+          leadId ? `Reference: ${leadId}` : '',
+          '',
+          `Customer Name: ${fullName}`,
+          `Phone: ${phone}`,
+          `Email: ${customerEmail}`,
+          `Subject: ${subject}`,
+          '',
+          'Request Details:',
+          details || 'No additional notes provided.',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #ffffff;">
+            <div style="background: #001E50; color: #ffffff; padding: 20px 24px;">
+              <p style="margin: 0; font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; opacity: 0.85;">${escapeHtml(groupName)} · ${escapeHtml(branchName)}</p>
+              <h2 style="margin: 6px 0 0; font-size: 20px;">New ${escapeHtml(leadLabel)}</h2>
+            </div>
+            <div style="padding: 24px; color: #0f172a; font-size: 14px; line-height: 1.6;">
+              <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px;">
+                <tr>
+                  <td style="padding: 6px 0; color: #475569; width: 165px;"><strong>Customer Name:</strong></td>
+                  <td style="padding: 6px 0;">${escapeHtml(fullName)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #475569;"><strong>Phone Number:</strong></td>
+                  <td style="padding: 6px 0;"><a href="tel:${escapeHtml(phone)}" style="color: #00437A; text-decoration: none;">${escapeHtml(phone)}</a></td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #475569;"><strong>Customer Email:</strong></td>
+                  <td style="padding: 6px 0;"><a href="mailto:${escapeHtml(customerEmail)}" style="color: #00437A; text-decoration: none;">${escapeHtml(customerEmail)}</a></td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #475569;"><strong>Submitted Branch:</strong></td>
+                  <td style="padding: 6px 0;">${escapeHtml(branchName)}</td>
+                </tr>
+                ${
+                  homeBranchName && homeBranchName !== branchName
+                    ? `<tr>
+                  <td style="padding: 6px 0; color: #475569;"><strong>Holding / Target Branch:</strong></td>
+                  <td style="padding: 6px 0;">${escapeHtml(homeBranchName)}</td>
+                </tr>`
+                    : ''
+                }
+                <tr>
+                  <td style="padding: 6px 0; color: #475569;"><strong>Subject:</strong></td>
+                  <td style="padding: 6px 0;">${escapeHtml(subject)}</td>
+                </tr>
+              </table>
+
+              <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px;">
+                <p style="margin: 0 0 6px; font-size: 12px; font-weight: bold; text-transform: uppercase; color: #475569;">Request Details</p>
+                <p style="margin: 0; font-size: 14px; color: #1e293b;">${detailsHtml}</p>
+              </div>
+
+              <p style="margin: 18px 0 0; font-size: 12px; color: #64748b;">
+                Hit <strong>Reply</strong> in your email app to reply directly to ${escapeHtml(fullName)} (${escapeHtml(customerEmail)}).
+                ${leadId ? ` Lead ID: ${escapeHtml(leadId)}` : ''}
+              </p>
+            </div>
+          </div>
+        `,
+      });
+
+      res.status(200).json({ delivered: true, recipients: toList });
+    } catch (err) {
+      res.status(500).json({
+        delivered: false,
+        error: err instanceof Error ? err.message : 'Unable to send notification email.',
       });
     }
   });

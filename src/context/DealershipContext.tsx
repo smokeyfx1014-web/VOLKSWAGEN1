@@ -299,6 +299,55 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
             branch.youtubeUrl ?? socialFallback?.youtubeUrl ?? groupProfile.youtubeUrl,
           archived: Boolean(branch.archived),
           sortOrder: typeof branch.sortOrder === 'number' ? branch.sortOrder : idx + 1,
+          salesNotifyEmail:
+            branch.salesNotifyEmail ??
+            fallback?.salesNotifyEmail ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          serviceNotifyEmail:
+            branch.serviceNotifyEmail ??
+            fallback?.serviceNotifyEmail ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          partsNotifyEmail:
+            branch.partsNotifyEmail ??
+            fallback?.partsNotifyEmail ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          financeNotifyEmail:
+            branch.financeNotifyEmail ??
+            fallback?.financeNotifyEmail ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          generalNotifyEmail:
+            branch.generalNotifyEmail ??
+            fallback?.generalNotifyEmail ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          smtpHost: branch.smtpHost ?? fallback?.smtpHost ?? 'smtp.gmail.com',
+          smtpPort:
+            typeof branch.smtpPort === 'number'
+              ? branch.smtpPort
+              : fallback?.smtpPort ?? 465,
+          smtpUser:
+            branch.smtpUser ??
+            fallback?.smtpUser ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          smtpFrom:
+            branch.smtpFrom ??
+            fallback?.smtpFrom ??
+            `${branch.name} <${branch.smtpUser ?? fallback?.smtpUser ?? groupProfile.defaultNotifyEmail ?? ''}>`,
+          defaultNotifyEmail:
+            branch.defaultNotifyEmail ??
+            fallback?.defaultNotifyEmail ??
+            branch.email ??
+            groupProfile.defaultNotifyEmail ??
+            '',
+          smtpPassEnvKey:
+            branch.smtpPassEnvKey ??
+            fallback?.smtpPassEnvKey ??
+            `SMTP_PASS_BRANCH_${branch.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'MAIN'}`,
         };
       })
       .sort(
@@ -306,7 +355,7 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
           (a.sortOrder ?? 999) - (b.sortOrder ?? 999) ||
           a.name.localeCompare(b.name)
       );
-  }, [dbDealerships, groupProfile.youtubeUrl]);
+  }, [dbDealerships, groupProfile.youtubeUrl, groupProfile.defaultNotifyEmail]);
 
   const activeDealerships: DealershipRecord[] = useMemo(() => {
     const active = allDealerships.filter((b) => !b.archived);
@@ -382,6 +431,7 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
         emblemLogoSrc: profile.emblemLogoSrc.trim().slice(0, 500),
         youtubeUrl: profile.youtubeUrl.trim().slice(0, 300),
         defaultBranchId: safeDefaultBranch,
+        defaultNotifyEmail: (profile.defaultNotifyEmail || '').trim().slice(0, 140),
         updatedAt: serverTimestamp(),
         updatedBy: uid,
       };
@@ -414,6 +464,16 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
       .toUpperCase()
       .slice(0, 10);
 
+    const parsedPort = Number(record.smtpPort ?? 465);
+    const safePort =
+      Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535
+        ? Math.round(parsedPort)
+        : 465;
+    const rawPassKey = (record.smtpPassEnvKey || '').trim().toUpperCase();
+    const safePassKey = /^SMTP_PASS(?:_[A-Z0-9_]{1,40})?$/.test(rawPassKey)
+      ? rawPassKey
+      : `SMTP_PASS_BRANCH_${cleanedId.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'MAIN'}`;
+
     const payload: DealershipRecord = {
       id: cleanedId,
       name: record.name.trim().slice(0, 120),
@@ -443,6 +503,17 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
       syncEnabled: Boolean(record.syncEnabled && validatedAutoTraderUrl),
       archived: Boolean(record.archived),
       sortOrder: Math.max(0, Math.min(10000, Number(record.sortOrder ?? 10) || 10)),
+      salesNotifyEmail: (record.salesNotifyEmail || '').trim().slice(0, 140),
+      serviceNotifyEmail: (record.serviceNotifyEmail || '').trim().slice(0, 140),
+      partsNotifyEmail: (record.partsNotifyEmail || '').trim().slice(0, 140),
+      financeNotifyEmail: (record.financeNotifyEmail || '').trim().slice(0, 140),
+      generalNotifyEmail: (record.generalNotifyEmail || '').trim().slice(0, 140),
+      smtpHost: (record.smtpHost || '').trim().slice(0, 140),
+      smtpPort: safePort,
+      smtpUser: (record.smtpUser || '').trim().slice(0, 140),
+      smtpFrom: (record.smtpFrom || '').trim().slice(0, 180),
+      defaultNotifyEmail: (record.defaultNotifyEmail || '').trim().slice(0, 140),
+      smtpPassEnvKey: safePassKey.slice(0, 60),
       updatedAt: serverTimestamp(),
       updatedBy: uid,
     };
