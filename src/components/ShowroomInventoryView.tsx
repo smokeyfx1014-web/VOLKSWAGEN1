@@ -50,7 +50,7 @@ export function ShowroomInventoryView({
   onEnquireDeal,
   onEnterCompetition,
 }: ShowroomInventoryViewProps) {
-  const { activeDealership, dealershipsById, allDealerships } = useDealership();
+  const { activeDealership, dealershipsById, activeDealerships, groupProfile } = useDealership();
   const { activeVehicles, activeSpecials, activeCompetitions, loadingCatalog } =
     useDealershipData();
 
@@ -95,7 +95,7 @@ export function ShowroomInventoryView({
             <SectionHeader
               kicker="Active Dealership & Group Campaigns"
               title={`${activeDealership.name} Specials & Promotions`}
-              description={`Live dated specials and competitions available at ${activeDealership.shortName} (including Asaf Auto Sales Group-wide MASTER campaigns and ${activeDealership.shortName}-exclusive deals).`}
+              description={`Live dated specials and competitions available at ${activeDealership.shortName} (including ${groupProfile.groupName}-wide MASTER campaigns and ${activeDealership.shortName}-exclusive deals).`}
             />
 
             {/* Specials Filter Bar */}
@@ -168,7 +168,7 @@ export function ShowroomInventoryView({
                   const scopeLabel =
                     special.scope === 'MASTER'
                       ? 'All Group Branches'
-                      : `${dealershipsById[special.dealershipId ?? activeDealership.id]?.shortName} Exclusive`;
+                      : `${dealershipsById[special.dealershipId ?? activeDealership.id]?.shortName ?? activeDealership.shortName} Exclusive`;
 
                   return (
                     <motion.article
@@ -289,7 +289,7 @@ export function ShowroomInventoryView({
               <SectionHeader
                 kicker="Dealership Competitions"
                 title="Active Promotions & Prize Draws"
-                description={`Participate in live competitions running at ${activeDealership.name} and across Asaf Auto Sales branches.`}
+                description={`Participate in live competitions running at ${activeDealership.name} and across ${groupProfile.groupName} branches.`}
               />
 
               <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -359,7 +359,7 @@ export function ShowroomInventoryView({
         <SectionHeader
           kicker="Master Group Showroom & MasterCars Inventory"
           title="Group New, Used & MasterCars Stock"
-          description={`Browse available Volkswagen stock across Newcastle VW, Ermelo VW, and Vryheid VW—and submit your enquiry or test-drive request directly through ${activeDealership.name}.`}
+          description={`Browse available Volkswagen stock across ${activeDealerships.map((b) => b.shortName).join(', ')}—and submit your enquiry or test-drive request directly through ${activeDealership.name}.`}
         />
 
         {/* Multi-Faceted Showroom Filter Bar */}
@@ -403,7 +403,7 @@ export function ShowroomInventoryView({
                 onChange={(e) => setBranchFilter(e.target.value as 'All' | DealershipId)}
               >
                 <option value="All">All Group Branches</option>
-                {allDealerships.map((b) => (
+                {activeDealerships.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.shortName} ({b.city})
                   </option>

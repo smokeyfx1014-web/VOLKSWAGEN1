@@ -27,9 +27,10 @@ export function VolkswagenEmblem({
   className?: string;
   inverted?: boolean;
 }) {
+  const { groupProfile } = useDealership();
   return (
     <img
-      src="/assets/aistudio/vw-logo_3bdead53.png"
+      src={groupProfile.emblemLogoSrc || '/assets/aistudio/vw-logo_3bdead53.png'}
       alt="Volkswagen Logo"
       className={cn(
         'h-8 w-8 shrink-0 object-contain transition-all duration-200',
@@ -41,10 +42,14 @@ export function VolkswagenEmblem({
 }
 
 export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProps) {
-  const { activeDealership, allDealerships, isBranchOverrideActive, switchPreviewBranch } =
+  const { activeDealership, activeDealerships, isBranchOverrideActive, switchPreviewBranch } =
     useDealership();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  const switcherBranches = activeDealerships.some((b) => b.id === activeDealership.id)
+    ? activeDealerships
+    : [...activeDealerships, activeDealership];
 
   useEffect(() => {
     const onScroll = () => {
@@ -139,9 +144,9 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
                     : 'border-white/30 bg-white/15 text-white backdrop-blur-md'
                 )}
               >
-                {allDealerships.map((b) => (
+                {switcherBranches.map((b) => (
                   <option key={b.id} value={b.id} className="text-[#091224] bg-white">
-                    Branch {b.id}: {b.shortName}
+                    {b.shortName} ({b.id}){b.archived ? ' [Archived]' : ''}
                   </option>
                 ))}
               </select>

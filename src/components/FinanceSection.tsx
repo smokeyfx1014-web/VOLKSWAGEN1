@@ -27,7 +27,7 @@ interface FinanceSectionProps {
 }
 
 export function FinanceSection({ onNavigate, onApplyFinance }: FinanceSectionProps) {
-  const { activeDealership, dealershipsById } = useDealership();
+  const { activeDealership, dealershipsById, groupProfile } = useDealership();
   const { activeVehicles } = useDealershipData();
 
   const wizardRef = useRef<HTMLDivElement | null>(null);
@@ -198,7 +198,7 @@ export function FinanceSection({ onNavigate, onApplyFinance }: FinanceSectionPro
                         const branch = dealershipsById[model.homeDealershipId];
                         return (
                           <option key={model.id} value={model.id}>
-                            {model.title} ({formatZAR(model.price)} · {branch?.shortName})
+                            {model.title} ({formatZAR(model.price)} · {branch?.shortName ?? activeDealership.shortName})
                           </option>
                         );
                       })}
@@ -344,7 +344,7 @@ export function FinanceSection({ onNavigate, onApplyFinance }: FinanceSectionPro
                     Actual instalments on loans obtained from financial institutions will vary depending on: the current prime interest rate, the financial institution&apos;s variables, the type, condition and age of the vehicle, your credit rating with the financial institution concerned, the respective initiation fees and the time period between the effective date of the loan and the first instalment payable. Please note that you should seek appropriate financial advice before concluding any loan agreements.
                   </p>
                   <p className="pt-2 border-t border-[#F1F5F9] font-medium text-[#00437A]">
-                    Protected by Docrat group Information Technology · {activeDealership.legalEntity} t/a {activeDealership.name} (Authorised FSP No. {activeDealership.fspNumber})
+                    Protected by {groupProfile.groupName} · {activeDealership.legalEntity} t/a {activeDealership.name} (Authorised FSP No. {activeDealership.fspNumber})
                   </p>
                 </div>
 

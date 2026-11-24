@@ -3,7 +3,6 @@ import { AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import {
-  GROUP_CORPORATE_INFO,
   SATURDAY_TEST_DRIVE_SLOTS,
   WEEKDAY_TEST_DRIVE_SLOTS,
 } from '../data/dealership';
@@ -64,7 +63,7 @@ const ERROR_INPUT_CLASS =
   'border-red-500 bg-red-50/40 focus-visible:border-red-600 focus-visible:ring-red-500/20';
 
 export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
-  const { activeDealership, dealershipsById } = useDealership();
+  const { activeDealership, dealershipsById, groupProfile } = useDealership();
   const { activeVehicles, submitLead } = useDealershipData();
 
   const [fullName, setFullName] = useState('');
@@ -178,22 +177,22 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
         subtitle: 'Protection of Personal Information Act (Act 4 of 2013)',
         paragraphs: [
           `${activeDealership.legalEntity} t/a ${activeDealership.name} collects and processes personal contact information strictly for responding to vehicle enquiries, test drive bookings, finance pre-qualification, workshop scheduling, and genuine parts orders.`,
-          `Lead records for non-purchase enquiries are retained for up to 365 days unless you request earlier deletion. Direct POPIA access, correction, or deletion requests to Compliance Officer ${GROUP_CORPORATE_INFO.complianceOfficer} at ${GROUP_CORPORATE_INFO.complianceEmail} or ${activeDealership.receptionNumber}.`,
+          `Lead records for non-purchase enquiries are retained for up to 365 days unless you request earlier deletion. Direct POPIA access, correction, or deletion requests to Compliance Officer ${groupProfile.complianceOfficer} at ${groupProfile.complianceEmail} or ${activeDealership.receptionNumber}.`,
         ],
       },
       paia: {
         title: 'PAIA Section 51 Manual',
         subtitle: 'Promotion of Access to Information Act',
         paragraphs: [
-          `In accordance with the Promotion of Access to Information Act (Act 2 of 2000), ${activeDealership.legalEntity} t/a ${activeDealership.name} (Part of ${GROUP_CORPORATE_INFO.groupName}) maintains a statutory manual detailing record categories held across Sales, Finance & Insurance, Workshop Administration, and Human Resources.`,
-          `Formal information requests may be directed to Information Officer ${GROUP_CORPORATE_INFO.complianceOfficer} (${GROUP_CORPORATE_INFO.complianceEmail}) at ${activeDealership.postalAddress || activeDealership.physicalAddress}.`,
+          `In accordance with the Promotion of Access to Information Act (Act 2 of 2000), ${activeDealership.legalEntity} t/a ${activeDealership.name} (Part of ${groupProfile.groupName}) maintains a statutory manual detailing record categories held across Sales, Finance & Insurance, Workshop Administration, and Human Resources.`,
+          `Formal information requests may be directed to Information Officer ${groupProfile.complianceOfficer} (${groupProfile.complianceEmail}) at ${activeDealership.postalAddress || activeDealership.physicalAddress}.`,
         ],
       },
       mastercars: {
         title: 'MasterCars Promise & Terms',
         subtitle: 'Certified Pre-Owned Standard',
         paragraphs: [
-          `Every certified MasterCar sold by ${activeDealership.name} (and our sister Asaf Auto Sales branches in Newcastle, Ermelo, and Vryheid) is under 5 years old with fewer than 120,000 km and completes a documented 80-point technical inspection.`,
+          `Every certified MasterCar sold by ${activeDealership.name} (and our sister ${groupProfile.groupName} branches) is under 5 years old with fewer than 120,000 km and completes a documented 80-point technical inspection.`,
           `Qualifying vehicles carry a 7-day / 1,000 km exchange guarantee, 12-month certification, and 24/7 VW Alert roadside assistance (${activeDealership.roadsideAssist}).`,
         ],
       },
@@ -227,7 +226,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
   > = {
     'test-drive': {
       title: `Book a Test Drive — ${activeDealership.shortName}`,
-      subtitle: `${GROUP_CORPORATE_INFO.testDriveHoursSummary} (${activeDealership.physicalAddress}).`,
+      subtitle: `${groupProfile.testDriveHoursSummary} (${activeDealership.physicalAddress}).`,
       prefix: 'TD',
       ctaLabel: 'Request Test Drive Slot',
     },
@@ -265,7 +264,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       title: 'Enter Dealership Competition',
       subtitle:
         modal.competitionTitle ||
-        `Submit your entry with ${activeDealership.name} (Asaf Auto Sales Group).`,
+        `Submit your entry with ${activeDealership.name} (${groupProfile.groupName}).`,
       prefix: 'CMP',
       ctaLabel: 'Submit Competition Entry',
     },
@@ -393,7 +392,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       return;
     }
 
-    const ref = generateBookingRef(activeMeta.prefix, activeDealership.id);
+    const ref = generateBookingRef(activeMeta.prefix, activeDealership.referenceCode || activeDealership.id);
     setFieldErrors({});
     setErrorSummary('');
     setSubmittedRef(ref);
@@ -598,7 +597,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 <span>Test Drive Operating Hours ({activeDealership.shortName})</span>
               </div>
               <p className="font-mono text-[11px] text-[#475569]">
-                {GROUP_CORPORATE_INFO.testDriveHoursSummary}
+                {groupProfile.testDriveHoursSummary}
               </p>
             </div>
           )}
@@ -694,7 +693,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                   >
                     {activeVehicles.map((m) => (
                       <option key={m.id} value={m.title}>
-                        {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
+                        {m.title} ({dealershipsById[m.homeDealershipId]?.shortName ?? activeDealership.shortName})
                       </option>
                     ))}
                     {modal.vehicleName &&

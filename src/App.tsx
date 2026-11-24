@@ -55,7 +55,7 @@ function normalizeRoute(pathname: string): AppRoute {
 }
 
 function DealershipShell() {
-  const { activeDealership } = useDealership();
+  const { activeDealership, groupProfile } = useDealership();
   const [currentRoute, setCurrentRoute] = useState<AppRoute>(() =>
     normalizeRoute(window.location.pathname)
   );
@@ -70,7 +70,7 @@ function DealershipShell() {
   }, []);
 
   useEffect(() => {
-    const seo = getRouteSeoMeta(currentRoute, activeDealership);
+    const seo = getRouteSeoMeta(currentRoute, activeDealership, groupProfile);
     document.title = seo.title;
 
     const metaDesc = document.querySelector('meta[name="description"]');
@@ -87,7 +87,7 @@ function DealershipShell() {
     if (ogDesc) {
       ogDesc.setAttribute('content', seo.description);
     }
-  }, [currentRoute, activeDealership]);
+  }, [currentRoute, activeDealership, groupProfile]);
 
   const navigateTo = (route: AppRoute) => {
     if (route !== currentRoute) {

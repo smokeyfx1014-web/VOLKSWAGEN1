@@ -3,7 +3,6 @@ import { AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import {
-  GROUP_CORPORATE_INFO,
   SATURDAY_TEST_DRIVE_SLOTS,
   SERVICE_PARTS_ASSETS,
   STARTING_POINT_ASSETS,
@@ -58,7 +57,7 @@ const ERROR_INPUT_CLASS =
   'border-red-500 bg-red-50/40 focus-visible:border-red-600 focus-visible:ring-red-500/20';
 
 export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
-  const { activeDealership, dealershipsById } = useDealership();
+  const { activeDealership, dealershipsById, groupProfile } = useDealership();
   const { activeVehicles, submitLead } = useDealershipData();
 
   const [fullName, setFullName] = useState('');
@@ -183,7 +182,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
     }
 
     const prefix = mode === 'test-drive' ? 'TD' : mode === 'service' ? 'SRV' : 'PRT';
-    const ref = generateBookingRef(prefix, activeDealership.id);
+    const ref = generateBookingRef(prefix, activeDealership.referenceCode || activeDealership.id);
     setFieldErrors({});
     setErrorSummary('');
     setSubmittedRef(ref);
@@ -223,7 +222,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
       ? {
           kicker: 'Test Drive Experience',
           title: `Book a Test Drive at ${activeDealership.name}`,
-          description: `Test drives operate ${GROUP_CORPORATE_INFO.testDriveHoursSummary}. Our ${activeDealership.shortName} sales executive will call to confirm your time slot or offer the next available window.`,
+          description: `Test drives operate ${groupProfile.testDriveHoursSummary}. Our ${activeDealership.shortName} sales executive will call to confirm your time slot or offer the next available window.`,
           asset: STARTING_POINT_ASSETS.testDrive,
           cta: 'Request Test Drive Slot',
         }
@@ -265,7 +264,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
               </div>
               {mode === 'test-drive' ? (
                 <div className="space-y-1.5 text-xs">
-                  <p className="font-mono text-[#091224]">{GROUP_CORPORATE_INFO.testDriveHoursSummary}</p>
+                  <p className="font-mono text-[#091224]">{groupProfile.testDriveHoursSummary}</p>
                   <p className="text-[#64748B]">Sales Showroom: {activeDealership.salesHours}</p>
                 </div>
               ) : (
@@ -420,7 +419,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                         >
                           {activeVehicles.map((m) => (
                             <option key={m.id} value={m.title}>
-                              {m.title} ({dealershipsById[m.homeDealershipId]?.shortName})
+                              {m.title} ({dealershipsById[m.homeDealershipId]?.shortName ?? activeDealership.shortName})
                             </option>
                           ))}
                         </Select>

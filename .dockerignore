@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.aistudio
+DRAFT_firestore.rules
+*.log
+npm-debug.log*
+.DS_Store

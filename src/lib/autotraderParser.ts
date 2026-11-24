@@ -677,11 +677,10 @@ export function normalizeAutoTraderJsonInput(
       typeof row.mileage === 'number'
         ? row.mileage
         : parseMileageKm(String(row.mileage ?? '0'));
-    const branchCandidate = String(row.homeDealershipId ?? defaultBranchId);
-    const branchId: DealershipId =
-      branchCandidate === '1' || branchCandidate === '2' || branchCandidate === '3'
-        ? branchCandidate
-        : defaultBranchId;
+    const branchCandidate = String(row.homeDealershipId ?? defaultBranchId).trim();
+    const branchId: DealershipId = /^[a-zA-Z0-9_-]{1,64}$/.test(branchCandidate)
+      ? branchCandidate
+      : defaultBranchId;
 
     const imagesRaw = Array.isArray(row.adCardGalleryImageUrls)
       ? row.adCardGalleryImageUrls.map((item) => String(item))

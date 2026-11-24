@@ -69,15 +69,17 @@ export function calculateMonthlyFinance({
   };
 }
 
-const BRANCH_REF_CODES: Record<DealershipId, string> = {
+const DEFAULT_BRANCH_REF_CODES: Record<string, string> = {
   '1': 'NVW',
   '2': 'EVW',
   '3': 'VVW',
 };
 
-export function generateBookingRef(prefix: string, branchId: DealershipId = '1'): string {
+export function generateBookingRef(prefix: string, refCodeOrBranchId: string = '1'): string {
   const num = Math.floor(100000 + Math.random() * 900000);
-  const code = BRANCH_REF_CODES[branchId] ?? 'VW';
+  const mapped = DEFAULT_BRANCH_REF_CODES[refCodeOrBranchId];
+  const rawCode = mapped ?? refCodeOrBranchId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5);
+  const code = rawCode.length >= 2 ? rawCode : `VW${rawCode}`;
   return `${code}-${prefix}-${num}`;
 }
 

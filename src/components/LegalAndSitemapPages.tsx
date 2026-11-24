@@ -1,14 +1,14 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, FileText, Lock, ShieldCheck } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
-import { GROUP_CORPORATE_INFO, getSitemapDirectory } from '../data/dealership';
+import { getSitemapDirectory } from '../data/dealership';
 import { generateBookingRef } from '../lib/utils';
 import { AppRoute } from '../types/dealership';
 import { FadeUp, SectionHeader } from './MotionPrimitives';
 import { Button, Input, Label, Select } from './ui/shadcn';
 
 export function PrivacyPolicyPage() {
-  const { activeDealership } = useDealership();
+  const { activeDealership, groupProfile } = useDealership();
   const [lookupEmail, setLookupEmail] = useState('');
   const [requestAction, setRequestAction] = useState('View stored records summary');
   const [marketingConsent, setMarketingConsent] = useState<'opt-in' | 'opt-out'>('opt-out');
@@ -22,7 +22,7 @@ export function PrivacyPolicyPage() {
       return;
     }
     setError('');
-    setPortalRef(generateBookingRef('POPIA', activeDealership.id));
+    setPortalRef(generateBookingRef('POPIA', activeDealership.referenceCode || activeDealership.id));
   };
 
   return (
@@ -31,7 +31,7 @@ export function PrivacyPolicyPage() {
         <SectionHeader
           kicker="POPIA & Personal Information"
           title="Protection of Personal Information Policy"
-          description={`Responsible Party: ${activeDealership.legalEntity} trading as ${activeDealership.name} (Part of the ${GROUP_CORPORATE_INFO.groupName} · Authorised FSP No. ${activeDealership.fspNumber}).`}
+          description={`Responsible Party: ${activeDealership.legalEntity} trading as ${activeDealership.name} (Part of ${groupProfile.groupName} · Authorised FSP No. ${activeDealership.fspNumber}).`}
         />
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
@@ -45,12 +45,12 @@ export function PrivacyPolicyPage() {
                 Personal information submitted through {activeDealership.domain} is processed by{' '}
                 <strong>{activeDealership.legalEntity}</strong> ({activeDealership.name}) at{' '}
                 {activeDealership.physicalAddress}. For compliance enquiries or formal POPIA requests, contact{' '}
-                <strong>{GROUP_CORPORATE_INFO.complianceOfficer}</strong> at{' '}
+                <strong>{groupProfile.complianceOfficer}</strong> at{' '}
                 <a
-                  href={`mailto:${GROUP_CORPORATE_INFO.complianceEmail}`}
+                  href={`mailto:${groupProfile.complianceEmail}`}
                   className="font-medium text-[#001E50] underline"
                 >
-                  {GROUP_CORPORATE_INFO.complianceEmail}
+                  {groupProfile.complianceEmail}
                 </a>
                 .
               </p>
@@ -70,7 +70,7 @@ export function PrivacyPolicyPage() {
                 3. Third-Party Operators &amp; Group Cross-Branch Fulfilment
               </h3>
               <p>
-                {activeDealership.name} and fellow Asaf Auto Sales Volkswagen dealerships rely on specialised automotive CRM, workshop scheduling, and manufacturer software operators—some hosted outside South Africa. All third-party operators are contractually bound to enforce POPIA-equivalent technical and organisational security measures.
+                {activeDealership.name} and fellow {groupProfile.groupName} Volkswagen dealerships rely on specialised automotive CRM, workshop scheduling, and manufacturer software operators—some hosted outside South Africa. All third-party operators are contractually bound to enforce POPIA-equivalent technical and organisational security measures.
               </p>
             </div>
 
@@ -109,7 +109,7 @@ export function PrivacyPolicyPage() {
                   <p className="text-xs text-[#475569] leading-relaxed">
                     Your request (<strong>{requestAction}</strong>) for{' '}
                     <span className="font-mono text-[#091224]">{lookupEmail}</span> has been routed to{' '}
-                    {GROUP_CORPORATE_INFO.complianceOfficer} ({GROUP_CORPORATE_INFO.complianceEmail}).
+                    {groupProfile.complianceOfficer} ({groupProfile.complianceEmail}).
                   </p>
                   <p className="font-mono text-xs text-[#001E50]">Reference: {portalRef}</p>
                   <Button
@@ -184,7 +184,7 @@ export function PrivacyPolicyPage() {
 }
 
 export function TermsPage() {
-  const { activeDealership } = useDealership();
+  const { activeDealership, groupProfile } = useDealership();
 
   return (
     <div className="bg-white pt-24 pb-20">
@@ -221,12 +221,12 @@ export function TermsPage() {
             </h3>
             <p>
               While {activeDealership.name} strives to ensure accurate stock and promotional listings at all times, errors and omissions are excepted (E&amp;OE). Formal customer complaints, FSP compliance queries, or dispute escalations may be directed to{' '}
-              <strong>{GROUP_CORPORATE_INFO.complianceOfficer}</strong> via{' '}
+              <strong>{groupProfile.complianceOfficer}</strong> via{' '}
               <a
-                href={`mailto:${GROUP_CORPORATE_INFO.complianceEmail}`}
+                href={`mailto:${groupProfile.complianceEmail}`}
                 className="font-medium text-[#001E50] underline"
               >
-                {GROUP_CORPORATE_INFO.complianceEmail}
+                {groupProfile.complianceEmail}
               </a>{' '}
               or by telephoning {activeDealership.receptionNumber}.
             </p>
@@ -238,8 +238,11 @@ export function TermsPage() {
 }
 
 export function SitemapPage({ onNavigate }: { onNavigate: (route: AppRoute) => void }) {
-  const { activeDealership } = useDealership();
-  const directory = useMemo(() => getSitemapDirectory(activeDealership), [activeDealership]);
+  const { activeDealership, groupProfile } = useDealership();
+  const directory = useMemo(
+    () => getSitemapDirectory(activeDealership, groupProfile),
+    [activeDealership, groupProfile]
+  );
 
   return (
     <div className="bg-white pt-24 pb-20">

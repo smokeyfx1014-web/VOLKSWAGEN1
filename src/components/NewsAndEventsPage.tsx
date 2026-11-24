@@ -41,7 +41,7 @@ export function NewsAndEventsPage({
   onSelectArticle,
   onRsvpEvent,
 }: NewsAndEventsPageProps) {
-  const { activeDealership, dealershipsById } = useDealership();
+  const { activeDealership, dealershipsById, groupProfile } = useDealership();
   const { activeNews, activeEvents } = useDealershipData();
 
   const featuredNews = activeNews.find((a) => a.featured) ?? activeNews[0];
@@ -55,7 +55,7 @@ export function NewsAndEventsPage({
           <SectionHeader
             kicker="Dealership Calendar"
             title={`Upcoming ${activeDealership.name} & Group Events`}
-            description={`Test-drive Saturdays, seasonal multi-point safety clinics, and new model previews scoped to ${activeDealership.shortName} and the Asaf Auto Sales Group. Past events automatically archive after their end date.`}
+            description={`Test-drive Saturdays, seasonal multi-point safety clinics, and new model previews scoped to ${activeDealership.shortName} and ${groupProfile.groupName}. Past events automatically archive after their end date.`}
           />
 
           {activeEvents.length === 0 ? (
@@ -73,7 +73,7 @@ export function NewsAndEventsPage({
                 const scopeLabel =
                   ev.scope === 'MASTER'
                     ? 'All Group Branches'
-                    : `${dealershipsById[ev.dealershipId ?? activeDealership.id]?.shortName} Event`;
+                    : `${dealershipsById[ev.dealershipId ?? activeDealership.id]?.shortName ?? activeDealership.shortName} Event`;
 
                 return (
                   <FadeUp key={ev.id} delay={idx * 0.06}>

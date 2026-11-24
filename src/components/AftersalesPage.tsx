@@ -183,7 +183,7 @@ export function AftersalesPage({ initialTab = 'service' }: AftersalesPageProps) 
 
     const ref = generateBookingRef(
       activeTab === 'service' ? 'SRV' : 'PRT',
-      activeDealership.id
+      activeDealership.referenceCode || activeDealership.id
     );
     setFieldErrors({});
     setErrorSummary('');

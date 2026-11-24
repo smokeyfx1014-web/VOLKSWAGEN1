@@ -14,11 +14,7 @@ import {
 } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
-import {
-  BRANCH_SOCIAL_LINKS,
-  CONTACT_CARD_ASSETS,
-  GROUP_CORPORATE_INFO,
-} from '../data/dealership';
+import { CONTACT_CARD_ASSETS } from '../data/dealership';
 import {
   generateBookingRef,
   toGoogleMapsSearchUrl,
@@ -31,7 +27,7 @@ import { FadeUp, SectionHeader } from './MotionPrimitives';
 import { Button, Input, Label, Select, Textarea } from './ui/shadcn';
 
 export function ContactSection() {
-  const { activeDealership } = useDealership();
+  const { activeDealership, groupProfile } = useDealership();
   const { submitLead } = useDealershipData();
 
   const [name, setName] = useState('');
@@ -44,6 +40,7 @@ export function ContactSection() {
 
   const mapsUrl = toGoogleMapsSearchUrl(activeDealership.physicalAddress);
   const whatsappHref = toWhatsAppHref(activeDealership.whatsappNumber, activeDealership.name);
+  const youtubeUrl = activeDealership.youtubeUrl || groupProfile.youtubeUrl;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +52,7 @@ export function ContactSection() {
       setError('Please enter a valid email address.');
       return;
     }
-    const ref = generateBookingRef('ENQ', activeDealership.id);
+    const ref = generateBookingRef('ENQ', activeDealership.referenceCode || activeDealership.id);
     setError('');
     setConfirmationRef(ref);
     void submitLead({
@@ -114,36 +111,42 @@ export function ContactSection() {
                 <span>WhatsApp ({activeDealership.whatsappNumber})</span>
               </a>
             )}
-            <a
-              href={BRANCH_SOCIAL_LINKS[activeDealership.id].facebookUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`${activeDealership.name} on Facebook`}
-              title={`${activeDealership.name} on Facebook`}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
-            >
-              <Facebook className="h-4 w-4" />
-            </a>
-            <a
-              href={BRANCH_SOCIAL_LINKS[activeDealership.id].instagramUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`${activeDealership.name} on Instagram`}
-              title={`${activeDealership.name} on Instagram`}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
-            >
-              <Instagram className="h-4 w-4" />
-            </a>
-            <a
-              href={BRANCH_SOCIAL_LINKS[activeDealership.id].youtubeUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`${GROUP_CORPORATE_INFO.groupName} on YouTube`}
-              title={`${GROUP_CORPORATE_INFO.groupName} on YouTube`}
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
-            >
-              <Youtube className="h-4 w-4" />
-            </a>
+            {activeDealership.facebookUrl && (
+              <a
+                href={activeDealership.facebookUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${activeDealership.name} on Facebook`}
+                title={`${activeDealership.name} on Facebook`}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
+              >
+                <Facebook className="h-4 w-4" />
+              </a>
+            )}
+            {activeDealership.instagramUrl && (
+              <a
+                href={activeDealership.instagramUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${activeDealership.name} on Instagram`}
+                title={`${activeDealership.name} on Instagram`}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
+              >
+                <Instagram className="h-4 w-4" />
+              </a>
+            )}
+            {youtubeUrl && (
+              <a
+                href={youtubeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${groupProfile.groupName} on YouTube`}
+                title={`${groupProfile.groupName} on YouTube`}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#CBD5E1] bg-white text-[#001E50] transition-colors hover:border-[#001E50] hover:bg-[#F8FAFC]"
+              >
+                <Youtube className="h-4 w-4" />
+              </a>
+            )}
           </FadeUp>
         </div>
 
@@ -290,10 +293,10 @@ export function ContactSection() {
                     href={toTelHref(activeDealership.roadsideAssist)}
                     className="block font-mono text-base font-semibold tracking-tight text-white hover:underline tabular-nums"
                   >
-                    {activeDealership.roadsideAssist} · {GROUP_CORPORATE_INFO.vwRoadsideTollFree}
+                    {activeDealership.roadsideAssist} · {groupProfile.vwRoadsideTollFree}
                   </a>
                   <p className="font-mono text-[11px] text-white/70 tabular-nums">
-                    Cross-border: {GROUP_CORPORATE_INFO.vwRoadsideCrossBorder}
+                    Cross-border: {groupProfile.vwRoadsideCrossBorder}
                   </p>
                 </div>
               </div>

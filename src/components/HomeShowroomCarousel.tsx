@@ -28,7 +28,7 @@ export function HomeShowroomCarousel({
   onBookTestDrive,
   onEnquireVehicle,
 }: HomeShowroomCarouselProps) {
-  const { activeDealership, dealershipsById } = useDealership();
+  const { activeDealership, dealershipsById, activeDealerships } = useDealership();
   const { activeVehicles, activeSpecials, loadingCatalog } = useDealershipData();
 
   const [filter, setFilter] = useState<CarouselFilter>('all');
@@ -88,7 +88,7 @@ export function HomeShowroomCarousel({
           <SectionHeader
             kicker="Master Group Showroom Spotlight"
             title={`Available Volkswagen Group Stock`}
-            description={`Browse live New, MasterCars, and Used stock shared across Newcastle, Ermelo, and Vryheid—and enquire directly through ${activeDealership.shortName}.`}
+            description={`Browse live New, MasterCars, and Used stock shared across ${activeDealerships.map((b) => b.city).join(', ')}—and enquire directly through ${activeDealership.shortName}.`}
           />
 
           <div className="flex flex-wrap items-center gap-3">

@@ -682,7 +682,7 @@ export function FinanceApplicationWizard({
     }
 
     setSubmitting(true);
-    const reference = generateBookingRef('FIN', activeDealership.id);
+    const reference = generateBookingRef('FIN', activeDealership.referenceCode || activeDealership.id);
     const fullApplicantName = `${form.title} ${form.firstName.trim()} ${form.surname.trim()}`.trim();
     const attachedDocs = docs.filter((d) => d.fileName);
     const creditFlags = CREDIT_QUESTIONS.map(

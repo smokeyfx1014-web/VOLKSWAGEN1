@@ -3,6 +3,7 @@ import {
   CmsNewsArticle,
   CmsPromotion,
   CmsVehicle,
+  DealershipGroupProfile,
   DealershipId,
   DealershipRecord,
   HeroSlide,
@@ -10,22 +11,38 @@ import {
 } from '../types/dealership';
 import { toGoogleMapsEmbedUrl } from '../lib/utils';
 
-export const GROUP_CORPORATE_INFO = {
+export const DEFAULT_GROUP_PROFILE: DealershipGroupProfile = {
+  id: 'main',
+  groupName: 'Docrat Group',
   legalEntity: 'Asaf Auto Sales (Pty) Ltd',
   fspNumber: '13411',
-  groupName: 'Docrat Group',
-  groupLogoSrc: '/assets/aistudio/docratgroup-logo_6f4cf4a3.webp',
-  logoSrc: '/assets/aistudio/vw-logo_3bdead53.png',
   complianceOfficer: 'Ebrahim Docrat',
   complianceEmail: 'ebrahim@docratgroup.co.za',
   vwRoadsideTollFree: '0800 111 992',
   vwRoadsideCrossBorder: '+27 41 994 5615',
   testDriveHoursSummary: 'Mon–Fri: 09:00 – 15:00 · Sat: 09:00 – 11:00 · Sun: Closed',
+  groupLogoSrc: '/assets/aistudio/docratgroup-logo_6f4cf4a3.webp',
+  emblemLogoSrc: '/assets/aistudio/vw-logo_3bdead53.png',
   youtubeUrl: 'https://www.youtube.com/@DocratGroup',
+  defaultBranchId: '1',
+};
+
+export const GROUP_CORPORATE_INFO = {
+  legalEntity: DEFAULT_GROUP_PROFILE.legalEntity,
+  fspNumber: DEFAULT_GROUP_PROFILE.fspNumber,
+  groupName: DEFAULT_GROUP_PROFILE.groupName,
+  groupLogoSrc: DEFAULT_GROUP_PROFILE.groupLogoSrc,
+  logoSrc: DEFAULT_GROUP_PROFILE.emblemLogoSrc,
+  complianceOfficer: DEFAULT_GROUP_PROFILE.complianceOfficer,
+  complianceEmail: DEFAULT_GROUP_PROFILE.complianceEmail,
+  vwRoadsideTollFree: DEFAULT_GROUP_PROFILE.vwRoadsideTollFree,
+  vwRoadsideCrossBorder: DEFAULT_GROUP_PROFILE.vwRoadsideCrossBorder,
+  testDriveHoursSummary: DEFAULT_GROUP_PROFILE.testDriveHoursSummary,
+  youtubeUrl: DEFAULT_GROUP_PROFILE.youtubeUrl,
 };
 
 export const BRANCH_SOCIAL_LINKS: Record<
-  DealershipId,
+  string,
   { facebookUrl: string; instagramUrl: string; youtubeUrl: string }
 > = {
   '1': {
@@ -50,6 +67,7 @@ export const DEFAULT_DEALERSHIPS: Record<DealershipId, DealershipRecord> = {
     id: '1',
     name: 'Newcastle Volkswagen',
     shortName: 'Newcastle VW',
+    referenceCode: 'NVW',
     legalEntity: 'Asaf Auto Sales (Pty) Ltd',
     fspNumber: '13411',
     domain: 'www.newcastlevw.co.za',
@@ -66,14 +84,20 @@ export const DEFAULT_DEALERSHIPS: Record<DealershipId, DealershipRecord> = {
     vwFinancialServices: '0861 500 400',
     volkswagensure: '0800 204 638',
     mapEmbedUrl: toGoogleMapsEmbedUrl('77 Allen Street, Newcastle, 2940'),
+    facebookUrl: 'https://www.facebook.com/NewcastleVWAudi/',
+    instagramUrl: 'https://www.instagram.com/newcastle_vw/',
+    youtubeUrl: 'https://www.youtube.com/@DocratGroup',
     autotraderDealerId: '168682',
     autotraderUrl: 'https://www.autotrader.co.za/dealer/newcastle-volkswagen/168682',
     syncEnabled: true,
+    archived: false,
+    sortOrder: 1,
   },
   '2': {
     id: '2',
     name: 'Ermelo Volkswagen',
     shortName: 'Ermelo VW',
+    referenceCode: 'EVW',
     legalEntity: 'Asaf Auto Sales (Pty) Ltd',
     fspNumber: '13411',
     domain: 'www.ermelovw.co.za',
@@ -90,14 +114,20 @@ export const DEFAULT_DEALERSHIPS: Record<DealershipId, DealershipRecord> = {
     vwFinancialServices: '0861 500 400',
     volkswagensure: '0800 204 638',
     mapEmbedUrl: toGoogleMapsEmbedUrl('52 Kerk Street, Ermelo, 2351'),
+    facebookUrl: 'https://www.facebook.com/ermelovolkswagenkzn/',
+    instagramUrl: 'https://www.instagram.com/ermelovw/',
+    youtubeUrl: 'https://www.youtube.com/@DocratGroup',
     autotraderDealerId: '877',
     autotraderUrl: 'https://www.autotrader.co.za/dealer/ermelo-volkswagen/877',
     syncEnabled: true,
+    archived: false,
+    sortOrder: 2,
   },
   '3': {
     id: '3',
     name: 'Vryheid Volkswagen',
     shortName: 'Vryheid VW',
+    referenceCode: 'VVW',
     legalEntity: 'Asaf Auto Sales (Pty) Ltd',
     fspNumber: '13411',
     domain: 'www.vryheidvw.co.za',
@@ -114,9 +144,14 @@ export const DEFAULT_DEALERSHIPS: Record<DealershipId, DealershipRecord> = {
     vwFinancialServices: '0861 500 400',
     volkswagensure: '0800 204 638',
     mapEmbedUrl: toGoogleMapsEmbedUrl('Van Riebeeck Street, Vryheid, 3100'),
+    facebookUrl: 'https://www.facebook.com/VryheidVW/',
+    instagramUrl: 'https://www.instagram.com/vryheidvw/',
+    youtubeUrl: 'https://www.youtube.com/@DocratGroup',
     autotraderDealerId: '',
     autotraderUrl: '',
     syncEnabled: false,
+    archived: false,
+    sortOrder: 3,
   },
 };
 
@@ -663,7 +698,8 @@ export const INITIAL_CMS_NEWS: CmsNewsArticle[] = MOTORING_ARTICLES.map((a) => (
 }));
 
 export function getSitemapDirectory(
-  branch: DealershipRecord
+  branch: DealershipRecord,
+  groupProfile: DealershipGroupProfile = DEFAULT_GROUP_PROFILE
 ): { group: string; items: { label: string; route: AppRoute; description: string }[] }[] {
   return [
     {
@@ -677,7 +713,7 @@ export function getSitemapDirectory(
         {
           label: 'Group Showroom (New, Used & MasterCars)',
           route: '/vehicles',
-          description: 'Filter Master Group stock across Newcastle, Ermelo, and Vryheid by condition, body type & instalment',
+          description: `Filter ${groupProfile.groupName} stock across all active dealership branches by condition, body type & instalment`,
         },
         {
           label: 'Specials & Competitions',
@@ -687,7 +723,7 @@ export function getSitemapDirectory(
         {
           label: 'Book a Test Drive',
           route: '/test-drive',
-          description: `Schedule a weekday (09:00–15:00) or Saturday (09:00–11:00) test drive at ${branch.shortName}`,
+          description: `Schedule a weekday or Saturday test drive (${groupProfile.testDriveHoursSummary}) at ${branch.shortName}`,
         },
         {
           label: 'Volkswagen Finance',
@@ -702,7 +738,7 @@ export function getSitemapDirectory(
         {
           label: 'News & Dealership Events',
           route: '/news-events',
-          description: `Motoring News & upcoming events scoped to ${branch.shortName} and the group`,
+          description: `Motoring News & upcoming events scoped to ${branch.shortName} and ${groupProfile.groupName}`,
         },
         {
           label: 'Volkswagen Alert',
@@ -722,7 +758,7 @@ export function getSitemapDirectory(
         {
           label: 'Personal Information (POPIA)',
           route: '/privacy-policy',
-          description: 'POPIA policy, 365-day retention rules & personal data consent portal',
+          description: `POPIA policy, 365-day retention rules & personal data consent portal (${groupProfile.legalEntity})`,
         },
         {
           label: 'Terms & Conditions',
@@ -737,7 +773,7 @@ export function getSitemapDirectory(
         {
           label: 'Dealership Group Admin CMS',
           route: '/admin',
-          description: 'Staff portal for Master Stock, Scoped Promotions, Branch Settings, News & Leads',
+          description: 'Staff portal for Group & Branch Settings, Stock, Scoped Promotions, News & Department Leads',
         },
       ],
     },
@@ -746,16 +782,17 @@ export function getSitemapDirectory(
 
 export function getRouteSeoMeta(
   route: AppRoute,
-  branch: DealershipRecord
+  branch: DealershipRecord,
+  groupProfile: DealershipGroupProfile = DEFAULT_GROUP_PROFILE
 ): { title: string; description: string } {
   const map: Record<AppRoute, { title: string; description: string }> = {
     '/': {
       title: `${branch.name} | New Vehicles, MasterCars, Aftersales & Events — ${branch.province}`,
-      description: `Welcome to ${branch.name} (${branch.legalEntity}, FSP ${branch.fspNumber}) at ${branch.physicalAddress}. Explore Master Group VW stock, specials, finance, and service.`,
+      description: `Welcome to ${branch.name} (${branch.legalEntity}, FSP ${branch.fspNumber}) at ${branch.physicalAddress}. Explore ${groupProfile.groupName} VW stock, specials, finance, and service.`,
     },
     '/vehicles': {
       title: `Group Showroom & MasterCars Inventory | ${branch.name}`,
-      description: `Browse New, MasterCars Certified, and Used Volkswagen vehicles across Newcastle, Ermelo & Vryheid through ${branch.name}.`,
+      description: `Browse New, MasterCars Certified, and Used Volkswagen vehicles across ${groupProfile.groupName} branches through ${branch.name}.`,
     },
     '/specials': {
       title: `Monthly Specials & Competitions | ${branch.name}`,
@@ -763,7 +800,7 @@ export function getRouteSeoMeta(
     },
     '/test-drive': {
       title: `Book a Test Drive | ${branch.name}`,
-      description: `Schedule a Volkswagen test drive at ${branch.physicalAddress} (Mon–Fri 09:00–15:00, Sat 09:00–11:00).`,
+      description: `Schedule a Volkswagen test drive at ${branch.physicalAddress} (${groupProfile.testDriveHoursSummary}).`,
     },
     '/aftersales': {
       title: `Aftersales: Service Centre & Genuine Parts | ${branch.name}`,
@@ -799,7 +836,7 @@ export function getRouteSeoMeta(
     },
     '/privacy-policy': {
       title: `POPIA Personal Information & Privacy Policy | ${branch.name}`,
-      description: `Manage your POPIA data consent or contact Information Officer ${GROUP_CORPORATE_INFO.complianceOfficer} for ${branch.name}.`,
+      description: `Manage your POPIA data consent or contact Information Officer ${groupProfile.complianceOfficer} for ${branch.name}.`,
     },
     '/terms': {
       title: `Terms & Conditions (FSP ${branch.fspNumber}) | ${branch.name}`,
@@ -810,8 +847,8 @@ export function getRouteSeoMeta(
       description: `Complete HTML sitemap of ${branch.name} showroom, ownership, compliance, and contact pages.`,
     },
     '/admin': {
-      title: `Group Admin CMS | ${branch.name}`,
-      description: `Authenticated administration portal for ${branch.legalEntity} branches (Newcastle, Ermelo & Vryheid).`,
+      title: `${groupProfile.groupName} Admin CMS | ${branch.name}`,
+      description: `Authenticated administration & staff portal for ${groupProfile.legalEntity} dealerships.`,
     },
   };
   return map[route] ?? map['/'];

@@ -1,7 +1,6 @@
 import React from 'react';
 import { ExternalLink, Facebook, Instagram, Youtube } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
-import { BRANCH_SOCIAL_LINKS, GROUP_CORPORATE_INFO } from '../data/dealership';
 import { toIntlPhoneDisplay, toTelHref } from '../lib/utils';
 import { AppRoute, DealershipId } from '../types/dealership';
 import { VolkswagenEmblem } from './Navbar';
@@ -20,8 +19,28 @@ function buildBranchPreviewHref(branchId: DealershipId): string {
 }
 
 export function Footer({ onNavigate }: FooterProps) {
-  const { activeDealership, allDealerships } = useDealership();
-  const sisterDealerships = allDealerships.filter((d) => d.id !== activeDealership.id);
+  const { activeDealership, activeDealerships, groupProfile } = useDealership();
+  const sisterDealerships = activeDealerships.filter((d) => d.id !== activeDealership.id);
+  const socialLinks = [
+    {
+      label: 'Facebook',
+      icon: Facebook,
+      href: activeDealership.facebookUrl || '',
+      ariaLabel: `${activeDealership.name} on Facebook`,
+    },
+    {
+      label: 'Instagram',
+      icon: Instagram,
+      href: activeDealership.instagramUrl || '',
+      ariaLabel: `${activeDealership.name} on Instagram`,
+    },
+    {
+      label: 'YouTube',
+      icon: Youtube,
+      href: activeDealership.youtubeUrl || groupProfile.youtubeUrl || '',
+      ariaLabel: `${groupProfile.groupName} on YouTube`,
+    },
+  ].filter((item) => Boolean(item.href));
 
   const linkButton = (label: string, route: AppRoute) => (
     <a
@@ -53,56 +72,41 @@ export function Footer({ onNavigate }: FooterProps) {
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-3 rounded-lg border border-white/15 bg-white/5 px-3 py-2">
-                <img
-                  src={GROUP_CORPORATE_INFO.groupLogoSrc}
-                  alt="Docrat Group Logo"
-                  className="h-9 w-9 rounded-full bg-white p-0.5 object-contain"
-                />
+                {groupProfile.groupLogoSrc && (
+                  <img
+                    src={groupProfile.groupLogoSrc}
+                    alt={`${groupProfile.groupName} Logo`}
+                    className="h-9 w-9 rounded-full bg-white p-0.5 object-contain"
+                  />
+                )}
                 <div className="text-xs">
                   <span className="block text-white/60">Dealership Group</span>
                   <span className="font-semibold text-white">
-                    {GROUP_CORPORATE_INFO.groupName}
+                    {groupProfile.groupName}
                   </span>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5">
-                {[
-                  {
-                    label: 'Facebook',
-                    icon: Facebook,
-                    href: BRANCH_SOCIAL_LINKS[activeDealership.id].facebookUrl,
-                    ariaLabel: `${activeDealership.name} on Facebook`,
-                  },
-                  {
-                    label: 'Instagram',
-                    icon: Instagram,
-                    href: BRANCH_SOCIAL_LINKS[activeDealership.id].instagramUrl,
-                    ariaLabel: `${activeDealership.name} on Instagram`,
-                  },
-                  {
-                    label: 'YouTube',
-                    icon: Youtube,
-                    href: BRANCH_SOCIAL_LINKS[activeDealership.id].youtubeUrl,
-                    ariaLabel: `${GROUP_CORPORATE_INFO.groupName} on YouTube`,
-                  },
-                ].map((social) => {
-                  const Icon = social.icon;
-                  return (
-                    <a
-                      key={social.label}
-                      href={social.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={social.ariaLabel}
-                      aria-label={social.ariaLabel}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 text-white/75 transition-colors hover:border-white/40 hover:bg-white/10 hover:text-white"
-                    >
-                      <Icon className="h-4 w-4" />
-                    </a>
-                  );
-                })}
-              </div>
+              {socialLinks.length > 0 && (
+                <div className="flex items-center gap-2.5">
+                  {socialLinks.map((social) => {
+                    const Icon = social.icon;
+                    return (
+                      <a
+                        key={social.label}
+                        href={social.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={social.ariaLabel}
+                        aria-label={social.ariaLabel}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 text-white/75 transition-colors hover:border-white/40 hover:bg-white/10 hover:text-white"
+                      >
+                        <Icon className="h-4 w-4" />
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 

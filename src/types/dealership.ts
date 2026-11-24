@@ -1,11 +1,30 @@
 export type AssetAspectRatio = '16:9' | '4:3' | '3:2' | '16:10' | '1:1';
 
-export type DealershipId = '1' | '2' | '3';
+export type DealershipId = string;
+
+export interface DealershipGroupProfile {
+  id: 'main';
+  groupName: string;
+  legalEntity: string;
+  fspNumber: string;
+  complianceOfficer: string;
+  complianceEmail: string;
+  vwRoadsideTollFree: string;
+  vwRoadsideCrossBorder: string;
+  testDriveHoursSummary: string;
+  groupLogoSrc: string;
+  emblemLogoSrc: string;
+  youtubeUrl: string;
+  defaultBranchId: DealershipId;
+  updatedAt?: unknown;
+  updatedBy?: string;
+}
 
 export interface DealershipRecord {
   id: DealershipId;
   name: string;
   shortName: string;
+  referenceCode?: string;
   legalEntity: string;
   fspNumber: string;
   domain: string;
@@ -22,9 +41,14 @@ export interface DealershipRecord {
   vwFinancialServices: string;
   volkswagensure: string;
   mapEmbedUrl: string;
+  facebookUrl?: string;
+  instagramUrl?: string;
+  youtubeUrl?: string;
   autotraderDealerId: string;
   autotraderUrl: string;
   syncEnabled: boolean;
+  archived?: boolean;
+  sortOrder?: number;
   updatedAt?: unknown;
   updatedBy?: string;
 }
@@ -185,7 +209,7 @@ export interface CmsLeadSubmission {
   createdAt?: unknown;
 }
 
-export type StaffRole = 'admin' | 'agent';
+export type StaffRole = 'admin' | 'agent' | 'parts' | 'marketing' | 'service';
 
 export interface StaffUserProfile {
   uid: string;
@@ -200,13 +224,6 @@ export interface StaffUserProfile {
   updatedAt?: unknown;
   createdBy: string;
   updatedBy: string;
-}
-
-export interface StaffWelcomeEmailResult {
-  sent: boolean;
-  provider?: 'resend' | 'smtp';
-  reason?: 'NO_MAIL_PROVIDER' | 'DELIVERY_FAILED' | 'STATIC_HOSTING';
-  message: string;
 }
 
 export type AppRoute =

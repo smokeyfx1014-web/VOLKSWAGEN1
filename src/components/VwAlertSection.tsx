@@ -8,7 +8,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useDealership } from '../context/DealershipContext';
-import { CONTACT_CARD_ASSETS, GROUP_CORPORATE_INFO } from '../data/dealership';
+import { CONTACT_CARD_ASSETS } from '../data/dealership';
 import { generateBookingRef, toTelHref } from '../lib/utils';
 import { AppRoute } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
@@ -20,7 +20,7 @@ interface VwAlertBannerProps {
 }
 
 export function VwAlertEmergencyBar({ onOpenVwAlert }: VwAlertBannerProps) {
-  const { activeDealership } = useDealership();
+  const { activeDealership, groupProfile } = useDealership();
 
   return (
     <section
@@ -44,10 +44,10 @@ export function VwAlertEmergencyBar({ onOpenVwAlert }: VwAlertBannerProps) {
             </a>{' '}
             or{' '}
             <a
-              href={toTelHref(GROUP_CORPORATE_INFO.vwRoadsideTollFree)}
+              href={toTelHref(groupProfile.vwRoadsideTollFree)}
               className="font-mono font-semibold text-white underline underline-offset-4 tabular-nums"
             >
-              {GROUP_CORPORATE_INFO.vwRoadsideTollFree}
+              {groupProfile.vwRoadsideTollFree}
             </a>
           </p>
         </div>
@@ -71,7 +71,7 @@ interface VwAlertPageProps {
 }
 
 export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
-  const { activeDealership } = useDealership();
+  const { activeDealership, groupProfile } = useDealership();
   const [vin, setVin] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [error, setError] = useState('');
@@ -91,7 +91,7 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
       return;
     }
     setError('');
-    setCheckRef(generateBookingRef('VWA', activeDealership.id));
+    setCheckRef(generateBookingRef('VWA', activeDealership.referenceCode || activeDealership.id));
   };
 
   return (
@@ -150,7 +150,7 @@ export function VwAlertPage({ onNavigate, onBookService }: VwAlertPageProps) {
                   <li className="flex items-start gap-2.5">
                     <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#00437A]" />
                     <span>
-                      24-hour mechanical breakdown recovery, flat tyre assistance, fuel delivery, and towing across South Africa and cross-border ({GROUP_CORPORATE_INFO.vwRoadsideCrossBorder}).
+                      24-hour mechanical breakdown recovery, flat tyre assistance, fuel delivery, and towing across South Africa and cross-border ({groupProfile.vwRoadsideCrossBorder}).
                     </span>
                   </li>
                   <li className="flex items-start gap-2.5">

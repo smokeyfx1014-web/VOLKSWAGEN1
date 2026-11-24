@@ -1,16 +1,56 @@
 {
   "entities": {
-    "Dealership": {
-      "title": "Dealership",
-      "description": "Multi-branch Volkswagen dealership configuration (Newcastle, Ermelo, Vryheid) under Asaf Auto Sales (Pty) Ltd.",
+    "DealershipGroup": {
+      "title": "DealershipGroup",
+      "description": "Corporate group identity, FSP/POPIA compliance settings, roadside numbers, and default landing branch for the Volkswagen dealership group.",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "enum": ["1", "2", "3"] },
-        "name": { "type": "string", "minLength": 3, "maxLength": 120 },
-        "shortName": { "type": "string", "minLength": 3, "maxLength": 60 },
-        "legalEntity": { "type": "string", "minLength": 3, "maxLength": 140 },
+        "id": { "type": "string", "enum": ["main"] },
+        "groupName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "legalEntity": { "type": "string", "minLength": 2, "maxLength": 140 },
         "fspNumber": { "type": "string", "minLength": 2, "maxLength": 30 },
-        "domain": { "type": "string", "minLength": 4, "maxLength": 120 },
+        "complianceOfficer": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "complianceEmail": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "vwRoadsideTollFree": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "vwRoadsideCrossBorder": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "testDriveHoursSummary": { "type": "string", "minLength": 5, "maxLength": 160 },
+        "groupLogoSrc": { "type": "string", "maxLength": 500 },
+        "emblemLogoSrc": { "type": "string", "maxLength": 500 },
+        "youtubeUrl": { "type": "string", "maxLength": 300 },
+        "defaultBranchId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "id",
+        "groupName",
+        "legalEntity",
+        "fspNumber",
+        "complianceOfficer",
+        "complianceEmail",
+        "vwRoadsideTollFree",
+        "vwRoadsideCrossBorder",
+        "testDriveHoursSummary",
+        "groupLogoSrc",
+        "emblemLogoSrc",
+        "youtubeUrl",
+        "defaultBranchId",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "Dealership": {
+      "title": "Dealership",
+      "description": "Dynamic Volkswagen dealership branch configuration supporting 1, 2, 3, 4, or more active and archived branches.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "name": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "shortName": { "type": "string", "minLength": 2, "maxLength": 60 },
+        "referenceCode": { "type": "string", "maxLength": 10 },
+        "legalEntity": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "fspNumber": { "type": "string", "minLength": 2, "maxLength": 30 },
+        "domain": { "type": "string", "minLength": 3, "maxLength": 120 },
         "receptionNumber": { "type": "string", "minLength": 5, "maxLength": 40 },
         "whatsappNumber": { "type": "string", "maxLength": 40 },
         "email": { "type": "string", "minLength": 5, "maxLength": 140 },
@@ -24,9 +64,14 @@
         "vwFinancialServices": { "type": "string", "minLength": 5, "maxLength": 40 },
         "volkswagensure": { "type": "string", "minLength": 5, "maxLength": 40 },
         "mapEmbedUrl": { "type": "string", "maxLength": 600 },
+        "facebookUrl": { "type": "string", "maxLength": 300 },
+        "instagramUrl": { "type": "string", "maxLength": 300 },
+        "youtubeUrl": { "type": "string", "maxLength": 300 },
         "autotraderDealerId": { "type": "string", "maxLength": 30 },
         "autotraderUrl": { "type": "string", "maxLength": 300 },
         "syncEnabled": { "type": "boolean" },
+        "archived": { "type": "boolean" },
+        "sortOrder": { "type": "number" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
       },
@@ -56,7 +101,7 @@
     },
     "Vehicle": {
       "title": "Vehicle",
-      "description": "Master Group Stock vehicle shared across all three branches with homeDealershipId physical location.",
+      "description": "Master Group Stock vehicle shared across active branches with homeDealershipId physical location.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
@@ -75,7 +120,7 @@
         "fuelEconomy": { "type": "string", "minLength": 2, "maxLength": 40 },
         "colour": { "type": "string", "minLength": 2, "maxLength": 60 },
         "images": { "type": "array" },
-        "homeDealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "homeDealershipId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
         "status": { "type": "string", "enum": ["available", "reserved", "sold"] },
         "source": { "type": "string", "enum": ["autotrader", "manual"] },
         "externalListingId": { "type": "string", "maxLength": 60 },
@@ -114,7 +159,7 @@
     },
     "Promotion": {
       "title": "Promotion",
-      "description": "Specials, Events & Competitions scoped to MASTER (all 3 sites) or a specific BRANCH (1, 2, or 3).",
+      "description": "Specials, Events & Competitions scoped to MASTER (group-wide) or a specific BRANCH.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
@@ -124,7 +169,7 @@
         "imageUrl": { "type": "string", "minLength": 5, "maxLength": 500 },
         "validUntil": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "maxLength": 10 },
         "scope": { "type": "string", "enum": ["MASTER", "BRANCH"] },
-        "dealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "dealershipId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
         "active": { "type": "boolean" },
         "vehicleName": { "type": "string", "maxLength": 120 },
         "offerPrice": { "type": "number" },
@@ -155,7 +200,7 @@
     },
     "NewsArticle": {
       "title": "NewsArticle",
-      "description": "Motoring news articles published by dealership group administrators.",
+      "description": "Motoring news articles published by dealership group administrators or marketing staff.",
       "type": "object",
       "properties": {
         "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
@@ -201,7 +246,7 @@
         "email": { "type": "string", "minLength": 5, "maxLength": 140 },
         "subject": { "type": "string", "minLength": 2, "maxLength": 200 },
         "details": { "type": "string", "maxLength": 6000 },
-        "submittedAtDealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "submittedAtDealershipId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
         "homeDealershipId": { "type": "string" },
         "status": { "type": "string", "enum": ["new", "contacted", "archived"] },
         "createdAt": { "type": "string", "format": "date-time" }
@@ -234,15 +279,15 @@
     },
     "StaffUser": {
       "title": "StaffUser",
-      "description": "Dealership staff user profile (Administrator or Car Sales Agent) allocated to a branch with first-login password setup tracking.",
+      "description": "Dealership staff user profile covering Administrator, Car Sales Agent, Marketing, Parts Sales Executive, and Service Booking Clerk.",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
         "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
         "phone": { "type": "string", "minLength": 7, "maxLength": 30 },
         "email": { "type": "string", "minLength": 5, "maxLength": 140 },
-        "role": { "type": "string", "enum": ["admin", "agent"] },
-        "allocatedDealershipId": { "type": "string", "enum": ["1", "2", "3"] },
+        "role": { "type": "string", "enum": ["admin", "agent", "parts", "marketing", "service"] },
+        "allocatedDealershipId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
         "mustChangePassword": { "type": "boolean" },
         "active": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
@@ -267,13 +312,17 @@
     }
   },
   "firestore": {
+    "/groupSettings/{docId}": {
+      "schema": { "$ref": "#/entities/DealershipGroup" },
+      "description": "Corporate group settings document ('main') defining group identity, FSP/compliance info, and default landing branch."
+    },
     "/dealerships/{branchId}": {
       "schema": { "$ref": "#/entities/Dealership" },
-      "description": "Branch metadata and contact settings for ID 1 (Newcastle), ID 2 (Ermelo), and ID 3 (Vryheid)."
+      "description": "Dynamic dealership branch metadata and contact settings (supports any number of active or archived branches)."
     },
     "/vehicles/{vehicleId}": {
       "schema": { "$ref": "#/entities/Vehicle" },
-      "description": "Shared Master Group Stock displayed across all three websites."
+      "description": "Shared Master Group Stock displayed across active dealership websites."
     },
     "/promotions/{promotionId}": {
       "schema": { "$ref": "#/entities/Promotion" },
@@ -293,7 +342,7 @@
     },
     "/staffUsers/{uid}": {
       "schema": { "$ref": "#/entities/StaffUser" },
-      "description": "Administrator and Car Sales Agent accounts with role and allocated dealership scoping."
+      "description": "Multi-role staff roster with role-based permissions and branch allocation."
     }
   }
 }

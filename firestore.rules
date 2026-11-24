@@ -13,7 +13,7 @@ service cloud.firestore {
     }
 
     function isValidBranchId(id) {
-      return id is string && id in ['1', '2', '3'];
+      return id is string && id.size() >= 1 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -45,6 +45,13 @@ service cloud.firestore {
       );
     }
 
+    function isMarketing() {
+      return isSignedIn()
+        && hasStaffDoc()
+        && staffData().role == 'marketing'
+        && staffData().active == true;
+    }
+
     function isAgentForBranch(branchId) {
       return isSignedIn()
         && isValidBranchId(branchId)
@@ -52,6 +59,45 @@ service cloud.firestore {
         && staffData().role == 'agent'
         && staffData().active == true
         && staffData().allocatedDealershipId == branchId;
+    }
+
+    function isDeptStaffForBranch(roleName, branchId) {
+      return isSignedIn()
+        && isValidBranchId(branchId)
+        && hasStaffDoc()
+        && staffData().role == roleName
+        && staffData().active == true
+        && staffData().allocatedDealershipId == branchId;
+    }
+
+    function isValidGroupSettings(data) {
+      return data.keys().hasAll([
+          'id', 'groupName', 'legalEntity', 'fspNumber', 'complianceOfficer',
+          'complianceEmail', 'vwRoadsideTollFree', 'vwRoadsideCrossBorder',
+          'testDriveHoursSummary', 'groupLogoSrc', 'emblemLogoSrc', 'youtubeUrl',
+          'defaultBranchId', 'updatedAt', 'updatedBy'
+        ])
+        && data.keys().hasOnly([
+          'id', 'groupName', 'legalEntity', 'fspNumber', 'complianceOfficer',
+          'complianceEmail', 'vwRoadsideTollFree', 'vwRoadsideCrossBorder',
+          'testDriveHoursSummary', 'groupLogoSrc', 'emblemLogoSrc', 'youtubeUrl',
+          'defaultBranchId', 'updatedAt', 'updatedBy'
+        ])
+        && data.id == 'main'
+        && data.groupName is string && data.groupName.size() >= 2 && data.groupName.size() <= 120
+        && data.legalEntity is string && data.legalEntity.size() >= 2 && data.legalEntity.size() <= 140
+        && data.fspNumber is string && data.fspNumber.size() >= 2 && data.fspNumber.size() <= 30
+        && data.complianceOfficer is string && data.complianceOfficer.size() >= 2 && data.complianceOfficer.size() <= 120
+        && data.complianceEmail is string && data.complianceEmail.size() >= 5 && data.complianceEmail.size() <= 140
+        && data.vwRoadsideTollFree is string && data.vwRoadsideTollFree.size() >= 5 && data.vwRoadsideTollFree.size() <= 40
+        && data.vwRoadsideCrossBorder is string && data.vwRoadsideCrossBorder.size() >= 5 && data.vwRoadsideCrossBorder.size() <= 40
+        && data.testDriveHoursSummary is string && data.testDriveHoursSummary.size() >= 5 && data.testDriveHoursSummary.size() <= 160
+        && data.groupLogoSrc is string && data.groupLogoSrc.size() <= 500
+        && data.emblemLogoSrc is string && data.emblemLogoSrc.size() <= 500
+        && data.youtubeUrl is string && data.youtubeUrl.size() <= 300
+        && isValidBranchId(data.defaultBranchId)
+        && data.updatedAt == request.time
+        && data.updatedBy is string && data.updatedBy == request.auth.uid;
     }
 
     function isValidDealership(data, branchParam) {
@@ -63,19 +109,21 @@ service cloud.firestore {
           'mapEmbedUrl', 'updatedAt', 'updatedBy'
         ])
         && data.keys().hasOnly([
-          'id', 'name', 'shortName', 'legalEntity', 'fspNumber', 'domain',
+          'id', 'name', 'shortName', 'referenceCode', 'legalEntity', 'fspNumber', 'domain',
           'receptionNumber', 'whatsappNumber', 'email', 'physicalAddress',
           'postalAddress', 'city', 'province', 'salesHours', 'serviceHours',
           'roadsideAssist', 'vwFinancialServices', 'volkswagensure',
-          'mapEmbedUrl', 'autotraderDealerId', 'autotraderUrl', 'syncEnabled',
-          'updatedAt', 'updatedBy'
+          'mapEmbedUrl', 'facebookUrl', 'instagramUrl', 'youtubeUrl',
+          'autotraderDealerId', 'autotraderUrl', 'syncEnabled',
+          'archived', 'sortOrder', 'updatedAt', 'updatedBy'
         ])
         && isValidBranchId(data.id) && data.id == branchParam
         && data.name is string && data.name.size() >= 3 && data.name.size() <= 120
-        && data.shortName is string && data.shortName.size() >= 3 && data.shortName.size() <= 60
-        && data.legalEntity is string && data.legalEntity.size() >= 3 && data.legalEntity.size() <= 140
+        && data.shortName is string && data.shortName.size() >= 2 && data.shortName.size() <= 60
+        && (!('referenceCode' in data) || (data.referenceCode is string && data.referenceCode.size() <= 10))
+        && data.legalEntity is string && data.legalEntity.size() >= 2 && data.legalEntity.size() <= 140
         && data.fspNumber is string && data.fspNumber.size() >= 2 && data.fspNumber.size() <= 30
-        && data.domain is string && data.domain.size() >= 4 && data.domain.size() <= 120
+        && data.domain is string && data.domain.size() >= 3 && data.domain.size() <= 120
         && data.receptionNumber is string && data.receptionNumber.size() >= 5 && data.receptionNumber.size() <= 40
         && data.whatsappNumber is string && data.whatsappNumber.size() <= 40
         && data.email is string && data.email.size() >= 5 && data.email.size() <= 140
@@ -89,9 +137,14 @@ service cloud.firestore {
         && data.vwFinancialServices is string && data.vwFinancialServices.size() >= 5 && data.vwFinancialServices.size() <= 40
         && data.volkswagensure is string && data.volkswagensure.size() >= 5 && data.volkswagensure.size() <= 40
         && data.mapEmbedUrl is string && data.mapEmbedUrl.size() <= 600
+        && (!('facebookUrl' in data) || (data.facebookUrl is string && data.facebookUrl.size() <= 300))
+        && (!('instagramUrl' in data) || (data.instagramUrl is string && data.instagramUrl.size() <= 300))
+        && (!('youtubeUrl' in data) || (data.youtubeUrl is string && data.youtubeUrl.size() <= 300))
         && (!('autotraderDealerId' in data) || (data.autotraderDealerId is string && data.autotraderDealerId.size() <= 30))
         && (!('autotraderUrl' in data) || (data.autotraderUrl is string && data.autotraderUrl.size() <= 300 && (data.autotraderUrl == '' || data.autotraderUrl.matches('^https://(www\\.)?autotrader\\.co\\.za/dealer/.*$'))))
         && (!('syncEnabled' in data) || data.syncEnabled is bool)
+        && (!('archived' in data) || data.archived is bool)
+        && (!('sortOrder' in data) || (data.sortOrder is number && data.sortOrder >= 0 && data.sortOrder <= 10000))
         && data.updatedAt == request.time
         && data.updatedBy is string && data.updatedBy == request.auth.uid;
     }
@@ -240,10 +293,10 @@ service cloud.firestore {
         && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
         && data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 30
         && data.email is string && data.email.size() >= 5 && data.email.size() <= 140
-        && data.role in ['admin', 'agent']
+        && data.role in ['admin', 'agent', 'parts', 'marketing', 'service']
         && (
-          (data.role == 'admin' && (data.allocatedDealershipId == null || isValidBranchId(data.allocatedDealershipId))) ||
-          (data.role == 'agent' && isValidBranchId(data.allocatedDealershipId))
+          (data.role in ['admin', 'marketing'] && (data.allocatedDealershipId == null || isValidBranchId(data.allocatedDealershipId))) ||
+          (data.role in ['agent', 'parts', 'service'] && isValidBranchId(data.allocatedDealershipId))
         )
         && data.mustChangePassword is bool
         && data.active is bool
@@ -259,15 +312,23 @@ service cloud.firestore {
       allow list, write: if false;
     }
 
-    // Dealership branches ("1" = Newcastle, "2" = Ermelo, "3" = Vryheid)
-    match /dealerships/{branchId} {
-      allow get: if isValidBranchId(branchId);
-      allow list: if resource.data.id in ['1', '2', '3'];
-      allow create, update: if isAdmin() && isValidBranchId(branchId) && isValidDealership(incoming(), branchId);
+    // Corporate Dealership Group configuration ("main")
+    match /groupSettings/{docId} {
+      allow get: if docId == 'main';
+      allow list: if false;
+      allow create, update: if isAdmin() && docId == 'main' && isValidGroupSettings(incoming());
       allow delete: if false;
     }
 
-    // Master Group Stock shared across all 3 dealership sites
+    // Dynamic Dealership branches (supports 1, 2, 3, 4+ active and archived branches)
+    match /dealerships/{branchId} {
+      allow get: if isValidBranchId(branchId);
+      allow list: if resource.data.archived == false || isAdmin();
+      allow create, update: if isAdmin() && isValidBranchId(branchId) && isValidDealership(incoming(), branchId);
+      allow delete: if isAdmin() && isValidBranchId(branchId);
+    }
+
+    // Master Group Stock shared across dealership sites
     match /vehicles/{vehicleId} {
       allow get: if isValidId(vehicleId) && (existing().status == 'available' || isAdmin() || isAgentForBranch(existing().homeDealershipId));
       allow list: if resource.data.status == 'available' || isAdmin() || isAgentForBranch(resource.data.homeDealershipId);
@@ -298,61 +359,127 @@ service cloud.firestore {
 
     // Scoped Specials, Events & Competitions
     match /promotions/{promotionId} {
-      allow get: if isValidId(promotionId) && (existing().active == true || isAdmin() || (existing().scope == 'BRANCH' && isAgentForBranch(existing().dealershipId)));
-      allow list: if resource.data.active == true || isAdmin() || (resource.data.scope == 'BRANCH' && isAgentForBranch(resource.data.dealershipId));
+      allow get: if isValidId(promotionId) && (
+        existing().active == true ||
+        isAdmin() ||
+        isMarketing() ||
+        (existing().scope == 'BRANCH' && isAgentForBranch(existing().dealershipId)) ||
+        (existing().scope == 'BRANCH' && existing().type == 'special' && (
+          isDeptStaffForBranch('parts', existing().dealershipId) ||
+          isDeptStaffForBranch('service', existing().dealershipId)
+        ))
+      );
+      allow list: if
+        resource.data.active == true ||
+        isAdmin() ||
+        isMarketing() ||
+        (resource.data.scope == 'BRANCH' && isAgentForBranch(resource.data.dealershipId)) ||
+        (resource.data.scope == 'BRANCH' && resource.data.type == 'special' && (
+          isDeptStaffForBranch('parts', resource.data.dealershipId) ||
+          isDeptStaffForBranch('service', resource.data.dealershipId)
+        ));
       allow create: if isValidId(promotionId)
         && incoming().id == promotionId
         && isValidPromotion(incoming())
         && (
           isAdmin() ||
-          (incoming().scope == 'BRANCH' && incoming().type in ['special', 'event'] && isAgentForBranch(incoming().dealershipId))
+          isMarketing() ||
+          (incoming().scope == 'BRANCH' && incoming().type in ['special', 'event'] && isAgentForBranch(incoming().dealershipId)) ||
+          (incoming().scope == 'BRANCH' && incoming().type == 'special' && (
+            isDeptStaffForBranch('parts', incoming().dealershipId) ||
+            isDeptStaffForBranch('service', incoming().dealershipId)
+          ))
         );
       allow update: if isValidId(promotionId)
         && incoming().id == existing().id
         && isValidPromotion(incoming())
         && (
           isAdmin() ||
+          isMarketing() ||
           (existing().scope == 'BRANCH'
             && incoming().scope == 'BRANCH'
             && existing().type in ['special', 'event']
             && incoming().type in ['special', 'event']
             && isAgentForBranch(existing().dealershipId)
-            && incoming().dealershipId == existing().dealershipId)
+            && incoming().dealershipId == existing().dealershipId) ||
+          (existing().scope == 'BRANCH'
+            && incoming().scope == 'BRANCH'
+            && existing().type == 'special'
+            && incoming().type == 'special'
+            && incoming().dealershipId == existing().dealershipId
+            && (
+              isDeptStaffForBranch('parts', existing().dealershipId) ||
+              isDeptStaffForBranch('service', existing().dealershipId)
+            ))
         );
       allow delete: if isValidId(promotionId)
         && (
           isAdmin() ||
-          (existing().scope == 'BRANCH' && existing().type in ['special', 'event'] && isAgentForBranch(existing().dealershipId))
+          isMarketing() ||
+          (existing().scope == 'BRANCH' && existing().type in ['special', 'event'] && isAgentForBranch(existing().dealershipId)) ||
+          (existing().scope == 'BRANCH' && existing().type == 'special' && (
+            isDeptStaffForBranch('parts', existing().dealershipId) ||
+            isDeptStaffForBranch('service', existing().dealershipId)
+          ))
         );
     }
 
-    // Motoring News
+    // Motoring News (Admin + Marketing manage group-wide)
     match /news/{articleId} {
-      allow get: if isValidId(articleId) && (existing().archived == false || isAdmin());
-      allow list: if resource.data.archived == false || isAdmin();
-      allow create: if isAdmin() && isValidId(articleId) && incoming().id == articleId && isValidNews(incoming());
-      allow update: if isAdmin() && isValidId(articleId) && incoming().id == existing().id && isValidNews(incoming());
-      allow delete: if isAdmin() && isValidId(articleId);
+      allow get: if isValidId(articleId) && (existing().archived == false || isAdmin() || isMarketing());
+      allow list: if resource.data.archived == false || isAdmin() || isMarketing();
+      allow create: if (isAdmin() || isMarketing()) && isValidId(articleId) && incoming().id == articleId && isValidNews(incoming());
+      allow update: if (isAdmin() || isMarketing()) && isValidId(articleId) && incoming().id == existing().id && isValidNews(incoming());
+      allow delete: if (isAdmin() || isMarketing()) && isValidId(articleId);
     }
 
-    // Customer enquiries/bookings (PII protected, tagged with branch IDs)
+    // Customer enquiries/bookings (PII protected; Admin full access; Parts & Service clerks branch + department scoped)
     match /leads/{leadId} {
-      allow get: if isAdmin() && isValidId(leadId);
-      allow list: if isAdmin();
+      allow get: if isValidId(leadId) && (
+        isAdmin() ||
+        (existing().leadType == 'parts' && (
+          isDeptStaffForBranch('parts', existing().submittedAtDealershipId) ||
+          isDeptStaffForBranch('parts', existing().homeDealershipId)
+        )) ||
+        (existing().leadType == 'service' && (
+          isDeptStaffForBranch('service', existing().submittedAtDealershipId) ||
+          isDeptStaffForBranch('service', existing().homeDealershipId)
+        ))
+      );
+      allow list: if
+        isAdmin() ||
+        (resource.data.leadType == 'parts' && (
+          isDeptStaffForBranch('parts', resource.data.submittedAtDealershipId) ||
+          isDeptStaffForBranch('parts', resource.data.homeDealershipId)
+        )) ||
+        (resource.data.leadType == 'service' && (
+          isDeptStaffForBranch('service', resource.data.submittedAtDealershipId) ||
+          isDeptStaffForBranch('service', resource.data.homeDealershipId)
+        ));
       allow create: if isValidId(leadId)
         && incoming().id == leadId
         && incoming().status == 'new'
         && incoming().createdAt == request.time
         && isValidLead(incoming());
-      allow update: if isAdmin()
-        && isValidId(leadId)
+      allow update: if isValidId(leadId)
         && isValidLead(incoming())
         && incoming().id == existing().id
         && incoming().leadType == existing().leadType
         && incoming().submittedAtDealershipId == existing().submittedAtDealershipId
         && incoming().homeDealershipId == existing().homeDealershipId
         && incoming().createdAt == existing().createdAt
-        && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status'])
+        && (
+          isAdmin() ||
+          (existing().leadType == 'parts' && (
+            isDeptStaffForBranch('parts', existing().submittedAtDealershipId) ||
+            isDeptStaffForBranch('parts', existing().homeDealershipId)
+          )) ||
+          (existing().leadType == 'service' && (
+            isDeptStaffForBranch('service', existing().submittedAtDealershipId) ||
+            isDeptStaffForBranch('service', existing().homeDealershipId)
+          ))
+        );
       allow delete: if isAdmin() && isValidId(leadId);
     }
 
@@ -364,7 +491,7 @@ service cloud.firestore {
       allow delete: if isAdmin() && isValidId(uid);
     }
 
-    // Dealership staff roster (Administrators & Car Sales Agents)
+    // Dealership multi-role staff roster (Admin, Agent, Marketing, Parts, Service)
     match /staffUsers/{uid} {
       allow get: if isSignedIn() && isValidId(uid) && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();

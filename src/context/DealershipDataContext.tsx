@@ -45,6 +45,7 @@ import {
   normalizeAutoTraderJsonInput,
 } from '../lib/autotraderParser';
 import {
+  BOOTSTRAPPED_ADMIN_EMAIL,
   OperationType,
   auth,
   db,
@@ -63,11 +64,9 @@ import {
   LeadSubmissionType,
   StaffRole,
   StaffUserProfile,
-  StaffWelcomeEmailResult,
 } from '../types/dealership';
 import { useDealership } from './DealershipContext';
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'smokeydhlamini@gmail.com';
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const VALID_ID_RE = /^[a-zA-Z0-9_-]{2,128}$/;
 
@@ -95,6 +94,10 @@ interface DealershipDataContextValue {
   authReady: boolean;
   isAdmin: boolean;
   isSalesAgent: boolean;
+  isMarketing: boolean;
+  isPartsExec: boolean;
+  isServiceClerk: boolean;
+  staffRole: StaffRole | null;
   canAccessPortal: boolean;
   allocatedBranchId: DealershipId | null;
   staffProfile: StaffUserProfile | null;
@@ -118,7 +121,7 @@ interface DealershipDataContextValue {
   activeCompetitions: CmsPromotion[];
   activeNews: CmsNewsArticle[];
 
-  // Admin / Agent collections
+  // Admin / Staff collections
   allVehicles: CmsVehicle[];
   allPromotions: CmsPromotion[];
   archivedPromotions: CmsPromotion[];
@@ -126,7 +129,7 @@ interface DealershipDataContextValue {
   leads: CmsLeadSubmission[];
   staffUsers: StaffUserProfile[];
 
-  // Admin & Agent mutations
+  // Admin & Staff mutations
   seedCatalogToFirestore: () => Promise<void>;
   seedAllDefaultData: () => Promise<void>;
   saveVehicle: (vehicle: Omit<CmsVehicle, 'createdAt' | 'updatedAt' | 'updatedBy'> & { createdAt?: unknown }) => Promise<void>;
@@ -165,13 +168,13 @@ interface DealershipDataContextValue {
     }
   ) => Promise<void>;
   removeStaffUser: (uid: string) => Promise<void>;
-  sendStaffWelcomeEmail: (payload: {
-    fullName: string;
-    recipientEmail: string;
-    role: StaffRole;
-    allocatedDealershipId: DealershipId | null;
-    temporaryPassword: string;
-  }) => Promise<StaffWelcomeEmailResult>;
+  getBranchDependencies: (branchId: DealershipId) => {
+    vehiclesCount: number;
+    promotionsCount: number;
+    staffCount: number;
+    totalCount: number;
+  };
+  deleteBranchIfUnused: (branchId: DealershipId) => Promise<void>;
 
   // Public booking / lead submission (auto-tags activeDealershipId + homeDealershipId)
   submitLead: (payload: {
@@ -189,8 +192,15 @@ interface DealershipDataContextValue {
 const DealershipDataContext = createContext<DealershipDataContextValue | null>(null);
 
 export function DealershipDataProvider({ children }: { children: React.ReactNode }) {
-  const { activeDealershipId, allDealerships, dealershipsById, seedDefaultDealerships } =
-    useDealership();
+  const {
+    activeDealershipId,
+    allDealerships,
+    dealershipsById,
+    hasDbGroupSettings,
+    hasDbDealerships,
+    seedDefaultDealerships,
+    deleteDealershipBranch,
+  } = useDealership();
 
   const [todayISO, setTodayISO] = useState<string>(() => getTodayISO());
   const [user, setUser] = useState<User | null>(null);
@@ -298,10 +308,49 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       staffProfile.allocatedDealershipId
   );
 
-  const canAccessPortal = isAdmin || isSalesAgent;
-  const allocatedBranchId: DealershipId | null = isSalesAgent
-    ? staffProfile?.allocatedDealershipId ?? null
+  const isMarketing = Boolean(
+    user &&
+      !isAdmin &&
+      staffProfile?.role === 'marketing' &&
+      staffProfile.active
+  );
+
+  const isPartsExec = Boolean(
+    user &&
+      !isAdmin &&
+      staffProfile?.role === 'parts' &&
+      staffProfile.active &&
+      staffProfile.allocatedDealershipId
+  );
+
+  const isServiceClerk = Boolean(
+    user &&
+      !isAdmin &&
+      staffProfile?.role === 'service' &&
+      staffProfile.active &&
+      staffProfile.allocatedDealershipId
+  );
+
+  const staffRole: StaffRole | null = isAdmin
+    ? 'admin'
+    : isSalesAgent
+    ? 'agent'
+    : isMarketing
+    ? 'marketing'
+    : isPartsExec
+    ? 'parts'
+    : isServiceClerk
+    ? 'service'
     : null;
+
+  const canAccessPortal =
+    isAdmin || isSalesAgent || isMarketing || isPartsExec || isServiceClerk;
+
+  const allocatedBranchId: DealershipId | null =
+    isSalesAgent || isPartsExec || isServiceClerk
+      ? staffProfile?.allocatedDealershipId ?? null
+      : null;
+
   const requiresPasswordSetup = Boolean(
     canAccessPortal && staffProfile?.mustChangePassword === true
   );
@@ -309,7 +358,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     user && !isBootstrappedOrRosterAdmin && staffProfile && !staffProfile.active
   );
 
-  // Real-time Firestore listeners (admins get full group access; agents get public + own branch)
+  // Real-time Firestore listeners partitioned cleanly by verified staff role
   useEffect(() => {
     if (!authReady) return;
 
@@ -365,8 +414,40 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       };
     }
 
-    setLeads([]);
     setStaffUsers([]);
+
+    if (isMarketing) {
+      setLeads([]);
+      const unsubVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('status', '==', 'available')),
+        (snap) => {
+          setDbVehicles(snap.docs.map((d) => d.data() as CmsVehicle));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
+      );
+
+      const unsubPromotions = onSnapshot(
+        collection(db, 'promotions'),
+        (snap) => {
+          setDbPromotions(snap.docs.map((d) => d.data() as CmsPromotion));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions')
+      );
+
+      const unsubNews = onSnapshot(
+        collection(db, 'news'),
+        (snap) => {
+          setDbNews(snap.docs.map((d) => d.data() as CmsNewsArticle));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'news')
+      );
+
+      return () => {
+        unsubVehicles();
+        unsubPromotions();
+        unsubNews();
+      };
+    }
 
     const unsubNews = onSnapshot(
       query(collection(db, 'news'), where('archived', '==', false)),
@@ -377,6 +458,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     );
 
     if (isSalesAgent && allocatedBranchId) {
+      setLeads([]);
       let publicVehicles: CmsVehicle[] = [];
       let branchVehicles: CmsVehicle[] = [];
       const syncMergedVehicles = () => {
@@ -445,6 +527,98 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       };
     }
 
+    if ((isPartsExec || isServiceClerk) && allocatedBranchId) {
+      const deptLeadType: LeadSubmissionType = isPartsExec ? 'parts' : 'service';
+
+      const unsubVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('status', '==', 'available')),
+        (snap) => {
+          setDbVehicles(snap.docs.map((d) => d.data() as CmsVehicle));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
+      );
+
+      let publicPromos: CmsPromotion[] = [];
+      let deptSpecials: CmsPromotion[] = [];
+      const syncMergedPromos = () => {
+        const merged = new Map<string, CmsPromotion>();
+        for (const p of publicPromos) merged.set(p.id, p);
+        for (const p of deptSpecials) merged.set(p.id, p);
+        setDbPromotions(Array.from(merged.values()));
+      };
+
+      const unsubPublicPromos = onSnapshot(
+        query(collection(db, 'promotions'), where('active', '==', true)),
+        (snap) => {
+          publicPromos = snap.docs.map((d) => d.data() as CmsPromotion);
+          syncMergedPromos();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions/public')
+      );
+
+      const unsubDeptPromos = onSnapshot(
+        query(
+          collection(db, 'promotions'),
+          where('scope', '==', 'BRANCH'),
+          where('dealershipId', '==', allocatedBranchId),
+          where('type', '==', 'special')
+        ),
+        (snap) => {
+          deptSpecials = snap.docs.map((d) => d.data() as CmsPromotion);
+          syncMergedPromos();
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `promotions/dept-${allocatedBranchId}`)
+      );
+
+      let submittedLeads: CmsLeadSubmission[] = [];
+      let homeLeads: CmsLeadSubmission[] = [];
+      const syncMergedLeads = () => {
+        const merged = new Map<string, CmsLeadSubmission>();
+        for (const l of submittedLeads) merged.set(l.id, l);
+        for (const l of homeLeads) merged.set(l.id, l);
+        setLeads(Array.from(merged.values()));
+      };
+
+      const unsubSubmittedLeads = onSnapshot(
+        query(
+          collection(db, 'leads'),
+          where('leadType', '==', deptLeadType),
+          where('submittedAtDealershipId', '==', allocatedBranchId)
+        ),
+        (snap) => {
+          submittedLeads = snap.docs.map((d) => d.data() as CmsLeadSubmission);
+          syncMergedLeads();
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `leads/${deptLeadType}-submitted`)
+      );
+
+      const unsubHomeLeads = onSnapshot(
+        query(
+          collection(db, 'leads'),
+          where('leadType', '==', deptLeadType),
+          where('homeDealershipId', '==', allocatedBranchId)
+        ),
+        (snap) => {
+          homeLeads = snap.docs.map((d) => d.data() as CmsLeadSubmission);
+          syncMergedLeads();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `leads/${deptLeadType}-home`)
+      );
+
+      return () => {
+        unsubVehicles();
+        unsubPublicPromos();
+        unsubDeptPromos();
+        unsubSubmittedLeads();
+        unsubHomeLeads();
+        unsubNews();
+      };
+    }
+
+    setLeads([]);
+
     const unsubVehicles = onSnapshot(
       query(collection(db, 'vehicles'), where('status', '==', 'available')),
       (snap) => {
@@ -466,7 +640,15 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       unsubPromotions();
       unsubNews();
     };
-  }, [authReady, isAdmin, isSalesAgent, allocatedBranchId]);
+  }, [
+    authReady,
+    isAdmin,
+    isSalesAgent,
+    isMarketing,
+    isPartsExec,
+    isServiceClerk,
+    allocatedBranchId,
+  ]);
 
   const seedCatalogToFirestore = useCallback(async () => {
     if (!user || !isAdmin) return;
@@ -508,10 +690,12 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     await seedCatalogToFirestore();
   }, [seedDefaultDealerships, seedCatalogToFirestore]);
 
-  // Auto-seed branches, promotions, and news once when an admin logs into an empty catalog
+  // Auto-seed defaults once only when an admin logs into a completely uninitialized database
   useEffect(() => {
     if (!isAdmin || !user || autoSeededRef.current) return;
     if (
+      !hasDbGroupSettings &&
+      !hasDbDealerships &&
       dbPromotions !== null &&
       dbNews !== null &&
       dbPromotions.length === 0 &&
@@ -520,7 +704,15 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       autoSeededRef.current = true;
       void seedAllDefaultData();
     }
-  }, [isAdmin, user, dbPromotions, dbNews, seedAllDefaultData]);
+  }, [
+    isAdmin,
+    user,
+    hasDbGroupSettings,
+    hasDbDealerships,
+    dbPromotions,
+    dbNews,
+    seedAllDefaultData,
+  ]);
 
   // Auto-remove legacy pre-seeded sample cars from Firestore once when admin signs in
   useEffect(() => {
@@ -540,9 +732,9 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     );
   }, [isAdmin, user, dbVehicles]);
 
-  // Auto-archive expired promotions when admin views catalog
+  // Auto-archive expired promotions when admin or marketing views catalog
   useEffect(() => {
-    if (!isAdmin || !user || !dbPromotions) return;
+    if ((!isAdmin && !isMarketing) || !user || !dbPromotions) return;
     const expiredActive = dbPromotions.filter((p) => p.active && p.validUntil < todayISO);
     for (const p of expiredActive) {
       const key = `promo:${p.id}:${p.validUntil}`;
@@ -555,7 +747,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         updatedBy: user.uid,
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `promotions/${p.id}`));
     }
-  }, [isAdmin, user, dbPromotions, todayISO]);
+  }, [isAdmin, isMarketing, user, dbPromotions, todayISO]);
 
   const loadingCatalog = dbVehicles === null || dbPromotions === null || dbNews === null;
 
@@ -759,7 +951,9 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     async (
       vehicle: Omit<CmsVehicle, 'createdAt' | 'updatedAt' | 'updatedBy'> & { createdAt?: unknown }
     ) => {
-      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
+      if (!user || (!isAdmin && !isSalesAgent)) {
+        throw new Error('Only Administrators and Car Sales Agents can manage vehicles.');
+      }
       const id = sanitizeId(vehicle.id, 'veh');
       const existingVehicle = (dbVehicles ?? []).find((v) => v.id === id);
 
@@ -850,12 +1044,14 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `vehicles/${id}`);
       }
     },
-    [user, canAccessPortal, isSalesAgent, allocatedBranchId, dbVehicles]
+    [user, isAdmin, isSalesAgent, allocatedBranchId, dbVehicles]
   );
 
   const deleteVehicle = useCallback(
     async (id: string) => {
-      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
+      if (!user || (!isAdmin && !isSalesAgent)) {
+        throw new Error('Only Administrators and Car Sales Agents can remove vehicles.');
+      }
       if (isSalesAgent) {
         const target = (dbVehicles ?? []).find((v) => v.id === id);
         if (
@@ -875,7 +1071,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.DELETE, `vehicles/${id}`);
       }
     },
-    [user, canAccessPortal, isSalesAgent, allocatedBranchId, dbVehicles]
+    [user, isAdmin, isSalesAgent, allocatedBranchId, dbVehicles]
   );
 
   const clearManualVehicles = useCallback(async (): Promise<number> => {
@@ -1141,7 +1337,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       const { vehicles, errors } = normalizeAutoTraderJsonInput(
         rawInput,
         targetBranchId,
-        targetBranch.autotraderDealerId || ''
+        targetBranch?.autotraderDealerId || ''
       );
       if (vehicles.length === 0) {
         throw new Error(errors[0] || 'No valid AutoTrader vehicle listings found to import.');
@@ -1158,8 +1354,8 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         const b = dealershipsById[branchId];
         return {
           branchId,
-          branchName: b.name,
-          dealerId: b.autotraderDealerId || '',
+          branchName: b?.name ?? `Branch ${branchId}`,
+          dealerId: b?.autotraderDealerId || '',
           skipped: false,
           pagesScraped: 1,
           listings,
@@ -1171,6 +1367,28 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     [user, isAdmin, dealershipsById, reconcileAutoTraderBranches]
   );
 
+  const canManagePromotion = useCallback(
+    (promo: Pick<CmsPromotion, 'scope' | 'dealershipId' | 'type'>) => {
+      if (isAdmin || isMarketing) return true;
+      if (isSalesAgent && allocatedBranchId) {
+        return (
+          promo.scope === 'BRANCH' &&
+          promo.dealershipId === allocatedBranchId &&
+          (promo.type === 'special' || promo.type === 'event')
+        );
+      }
+      if ((isPartsExec || isServiceClerk) && allocatedBranchId) {
+        return (
+          promo.scope === 'BRANCH' &&
+          promo.dealershipId === allocatedBranchId &&
+          promo.type === 'special'
+        );
+      }
+      return false;
+    },
+    [isAdmin, isMarketing, isSalesAgent, isPartsExec, isServiceClerk, allocatedBranchId]
+  );
+
   const savePromotion = useCallback(
     async (promo: Omit<CmsPromotion, 'updatedAt' | 'updatedBy'>) => {
       if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
@@ -1179,6 +1397,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       }
       const id = sanitizeId(promo.id, 'promo');
       const isExpired = promo.validUntil < todayISO;
+      const isDeptSpecialist = isPartsExec || isServiceClerk;
 
       if (isSalesAgent) {
         if (!allocatedBranchId) {
@@ -1189,18 +1408,34 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         }
       }
 
-      const scope = isSalesAgent
-        ? 'BRANCH'
-        : promo.scope === 'BRANCH'
-        ? 'BRANCH'
-        : 'MASTER';
-      const dealershipId = isSalesAgent
-        ? allocatedBranchId!
-        : scope === 'MASTER'
-        ? null
-        : promo.dealershipId ?? '1';
-      const promoType =
-        isSalesAgent && promo.type === 'competition' ? 'special' : promo.type;
+      if (isDeptSpecialist) {
+        if (!allocatedBranchId) {
+          throw new Error('No allocated dealership found for your staff profile.');
+        }
+        if (promo.type !== 'special') {
+          throw new Error(
+            'Department staff can only publish branch-scoped Specials.'
+          );
+        }
+      }
+
+      const scope =
+        isSalesAgent || isDeptSpecialist
+          ? 'BRANCH'
+          : promo.scope === 'BRANCH'
+          ? 'BRANCH'
+          : 'MASTER';
+      const dealershipId =
+        isSalesAgent || isDeptSpecialist
+          ? allocatedBranchId!
+          : scope === 'MASTER'
+          ? null
+          : promo.dealershipId ?? allDealerships[0]?.id ?? '1';
+      const promoType = isDeptSpecialist
+        ? 'special'
+        : isSalesAgent && promo.type === 'competition'
+        ? 'special'
+        : promo.type;
 
       const payload = {
         id,
@@ -1226,7 +1461,16 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `promotions/${id}`);
       }
     },
-    [user, canAccessPortal, isSalesAgent, allocatedBranchId, todayISO]
+    [
+      user,
+      canAccessPortal,
+      isSalesAgent,
+      isPartsExec,
+      isServiceClerk,
+      allocatedBranchId,
+      allDealerships,
+      todayISO,
+    ]
   );
 
   const archivePromotion = useCallback(
@@ -1234,15 +1478,8 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
       const target = allPromotions.find((p) => p.id === id);
       if (!target) return;
-      if (
-        isSalesAgent &&
-        (target.scope !== 'BRANCH' ||
-          target.dealershipId !== allocatedBranchId ||
-          (target.type !== 'special' && target.type !== 'event'))
-      ) {
-        throw new Error(
-          'Car Sales Agents can only archive specials and events belonging to their allocated dealership.'
-        );
+      if (!canManagePromotion(target)) {
+        throw new Error('You do not have permission to archive this campaign.');
       }
       try {
         await setDoc(doc(db, 'promotions', id), {
@@ -1255,7 +1492,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.UPDATE, `promotions/${id}`);
       }
     },
-    [user, canAccessPortal, isSalesAgent, allocatedBranchId, allPromotions]
+    [user, canAccessPortal, allPromotions, canManagePromotion]
   );
 
   const reactivatePromotion = useCallback(
@@ -1266,15 +1503,8 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       }
       const target = allPromotions.find((p) => p.id === id);
       if (!target) return;
-      if (
-        isSalesAgent &&
-        (target.scope !== 'BRANCH' ||
-          target.dealershipId !== allocatedBranchId ||
-          (target.type !== 'special' && target.type !== 'event'))
-      ) {
-        throw new Error(
-          'Car Sales Agents can only reactivate specials and events belonging to their allocated dealership.'
-        );
+      if (!canManagePromotion(target)) {
+        throw new Error('You do not have permission to reactivate this campaign.');
       }
       autoArchivedIdsRef.current.delete(`promo:${id}:${newValidUntil}`);
       try {
@@ -1289,24 +1519,15 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.UPDATE, `promotions/${id}`);
       }
     },
-    [user, canAccessPortal, isSalesAgent, allocatedBranchId, todayISO, allPromotions]
+    [user, canAccessPortal, todayISO, allPromotions, canManagePromotion]
   );
 
   const deletePromotion = useCallback(
     async (id: string) => {
       if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
-      if (isSalesAgent) {
-        const target = allPromotions.find((p) => p.id === id);
-        if (
-          !target ||
-          target.scope !== 'BRANCH' ||
-          target.dealershipId !== allocatedBranchId ||
-          (target.type !== 'special' && target.type !== 'event')
-        ) {
-          throw new Error(
-            'Car Sales Agents can only delete specials and events belonging to their allocated dealership.'
-          );
-        }
+      const target = allPromotions.find((p) => p.id === id);
+      if (!target || !canManagePromotion(target)) {
+        throw new Error('You do not have permission to delete this campaign.');
       }
       try {
         await deleteDoc(doc(db, 'promotions', id));
@@ -1314,12 +1535,14 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.DELETE, `promotions/${id}`);
       }
     },
-    [user, canAccessPortal, isSalesAgent, allocatedBranchId, allPromotions]
+    [user, canAccessPortal, allPromotions, canManagePromotion]
   );
 
   const saveNews = useCallback(
     async (article: Omit<CmsNewsArticle, 'updatedAt' | 'updatedBy'>) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || (!isAdmin && !isMarketing)) {
+        throw new Error('Administrator or Marketing privileges are required.');
+      }
       const id = sanitizeId(article.id, 'news');
       const payload = {
         id,
@@ -1341,36 +1564,57 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `news/${id}`);
       }
     },
-    [user, isAdmin]
+    [user, isAdmin, isMarketing]
   );
 
   const deleteNews = useCallback(
     async (id: string) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || (!isAdmin && !isMarketing)) {
+        throw new Error('Administrator or Marketing privileges are required.');
+      }
       try {
         await deleteDoc(doc(db, 'news', id));
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `news/${id}`);
       }
     },
-    [user, isAdmin]
+    [user, isAdmin, isMarketing]
   );
 
   const updateLeadStatus = useCallback(
     async (id: string, status: CmsLeadSubmission['status']) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user) throw new Error('Authenticated sign-in required.');
+      const target = leads.find((l) => l.id === id);
+      const canPartsUpdate = Boolean(
+        isPartsExec &&
+          allocatedBranchId &&
+          target?.leadType === 'parts' &&
+          (target.submittedAtDealershipId === allocatedBranchId ||
+            target.homeDealershipId === allocatedBranchId)
+      );
+      const canServiceUpdate = Boolean(
+        isServiceClerk &&
+          allocatedBranchId &&
+          target?.leadType === 'service' &&
+          (target.submittedAtDealershipId === allocatedBranchId ||
+            target.homeDealershipId === allocatedBranchId)
+      );
+
+      if (!isAdmin && !canPartsUpdate && !canServiceUpdate) {
+        throw new Error('You do not have permission to update this customer enquiry.');
+      }
       try {
         await updateDoc(doc(db, 'leads', id), { status });
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `leads/${id}`);
       }
     },
-    [user, isAdmin]
+    [user, isAdmin, isPartsExec, isServiceClerk, allocatedBranchId, leads]
   );
 
   const deleteLead = useCallback(
     async (id: string) => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || !isAdmin) throw new Error('Only Administrators can delete lead records.');
       try {
         await deleteDoc(doc(db, 'leads', id));
       } catch (err) {
@@ -1445,14 +1689,24 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       if (defaultPassword.length < 8) {
         throw new Error('Default password must be at least 8 characters long.');
       }
-      if (input.role === 'agent' && !input.allocatedDealershipId) {
-        throw new Error('Please select an allocated dealership for this Car Sales Agent.');
+      const isBranchScopedRole =
+        input.role === 'agent' || input.role === 'parts' || input.role === 'service';
+      const roleLabelMap: Record<StaffRole, string> = {
+        admin: 'Administrator',
+        agent: 'Car Sales Agent',
+        marketing: 'Marketing Coordinator',
+        parts: 'Parts Sales Executive',
+        service: 'Service Booking Clerk',
+      };
+      if (isBranchScopedRole && !input.allocatedDealershipId) {
+        throw new Error(
+          `Please select an allocated dealership for this ${roleLabelMap[input.role]}.`
+        );
       }
 
-      const assignedBranch: DealershipId | null =
-        input.role === 'agent'
-          ? input.allocatedDealershipId ?? '1'
-          : input.allocatedDealershipId;
+      const assignedBranch: DealershipId | null = isBranchScopedRole
+        ? input.allocatedDealershipId ?? allDealerships[0]?.id ?? '1'
+        : input.allocatedDealershipId;
 
       const provAuth = getProvisionerAuth();
       let createdUid = '';
@@ -1525,7 +1779,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         updatedBy: user.uid,
       };
     },
-    [user, isAdmin]
+    [user, isAdmin, allDealerships]
   );
 
   const updateStaffUser = useCallback(
@@ -1555,17 +1809,18 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       if (phone.length < 7) {
         throw new Error('Phone number must be at least 7 characters.');
       }
-      if (updates.role === 'agent' && !updates.allocatedDealershipId) {
-        throw new Error('Car Sales Agents must be assigned to a dealership.');
+      const isBranchScopedRole =
+        updates.role === 'agent' || updates.role === 'parts' || updates.role === 'service';
+      if (isBranchScopedRole && !updates.allocatedDealershipId) {
+        throw new Error('Branch-scoped staff roles must be assigned to a dealership.');
       }
       if (uid === user.uid && (!updates.active || updates.role !== 'admin')) {
         throw new Error('You cannot suspend or demote your own active Administrator session.');
       }
 
-      const assignedBranch =
-        updates.role === 'agent'
-          ? updates.allocatedDealershipId ?? '1'
-          : updates.allocatedDealershipId;
+      const assignedBranch = isBranchScopedRole
+        ? updates.allocatedDealershipId ?? allDealerships[0]?.id ?? '1'
+        : updates.allocatedDealershipId;
 
       try {
         await updateDoc(doc(db, 'staffUsers', uid), {
@@ -1592,7 +1847,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.UPDATE, `staffUsers/${uid}`);
       }
     },
-    [user, isAdmin, staffUsers]
+    [user, isAdmin, staffUsers, allDealerships]
   );
 
   const removeStaffUser = useCallback(
@@ -1613,70 +1868,41 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     [user, isAdmin]
   );
 
-  const sendStaffWelcomeEmail = useCallback(
-    async (payload: {
-      fullName: string;
-      recipientEmail: string;
-      role: StaffRole;
-      allocatedDealershipId: DealershipId | null;
-      temporaryPassword: string;
-    }): Promise<StaffWelcomeEmailResult> => {
-      if (!user || !isAdmin) {
-        return {
-          sent: false,
-          reason: 'DELIVERY_FAILED',
-          message: 'Administrator session required to send staff welcome messages.',
-        };
-      }
-
-      try {
-        const idToken = await user.getIdToken();
-        const response = await fetch('/api/send-staff-welcome', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${idToken}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          return {
-            sent: false,
-            reason: 'STATIC_HOSTING',
-            message:
-              'Automated welcome email endpoint is unavailable on static hosting. Use the Email App or WhatsApp buttons below to send credentials.',
-          };
-        }
-
-        const data = (await response.json()) as Partial<StaffWelcomeEmailResult> & {
-          error?: string;
-        };
-
-        return {
-          sent: Boolean(data.sent),
-          provider: data.provider,
-          reason: data.reason ?? (response.ok ? undefined : 'DELIVERY_FAILED'),
-          message:
-            data.message ||
-            data.error ||
-            (data.sent
-              ? `Welcome email sent to ${payload.recipientEmail}.`
-              : 'Unable to send automated welcome email.'),
-        };
-      } catch (err) {
-        return {
-          sent: false,
-          reason: 'DELIVERY_FAILED',
-          message:
-            err instanceof Error
-              ? err.message
-              : 'Network error while attempting to send welcome email.',
-        };
-      }
+  const getBranchDependencies = useCallback(
+    (branchId: DealershipId) => {
+      const vehiclesCount = allVehicles.filter((v) => v.homeDealershipId === branchId).length;
+      const promotionsCount = allPromotions.filter(
+        (p) => p.scope === 'BRANCH' && p.dealershipId === branchId
+      ).length;
+      const staffCount = staffUsers.filter((s) => s.allocatedDealershipId === branchId).length;
+      return {
+        vehiclesCount,
+        promotionsCount,
+        staffCount,
+        totalCount: vehiclesCount + promotionsCount + staffCount,
+      };
     },
-    [user, isAdmin]
+    [allVehicles, allPromotions, staffUsers]
+  );
+
+  const deleteBranchIfUnused = useCallback(
+    async (branchId: DealershipId) => {
+      if (!user || !isAdmin) {
+        throw new Error('Only Administrators can delete dealership branches.');
+      }
+      const deps = getBranchDependencies(branchId);
+      if (deps.totalCount > 0) {
+        const parts: string[] = [];
+        if (deps.vehiclesCount > 0) parts.push(`${deps.vehiclesCount} vehicle(s)`);
+        if (deps.promotionsCount > 0) parts.push(`${deps.promotionsCount} branch promotion(s)`);
+        if (deps.staffCount > 0) parts.push(`${deps.staffCount} assigned staff user(s)`);
+        throw new Error(
+          `Cannot delete this branch yet because ${parts.join(', ')} still reference it. Archive the branch now or reassign those records first.`
+        );
+      }
+      await deleteDealershipBranch(branchId);
+    },
+    [user, isAdmin, getBranchDependencies, deleteDealershipBranch]
   );
 
   const value: DealershipDataContextValue = {
@@ -1685,6 +1911,10 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     authReady,
     isAdmin,
     isSalesAgent,
+    isMarketing,
+    isPartsExec,
+    isServiceClerk,
+    staffRole,
     canAccessPortal,
     allocatedBranchId,
     staffProfile,
@@ -1728,7 +1958,8 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     createStaffUser,
     updateStaffUser,
     removeStaffUser,
-    sendStaffWelcomeEmail,
+    getBranchDependencies,
+    deleteBranchIfUnused,
     submitLead,
   };
 
