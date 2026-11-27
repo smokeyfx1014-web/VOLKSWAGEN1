@@ -55,7 +55,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         (request.auth.token.email_verified == true &&
-          request.auth.token.email == 'smokeydhlamini@gmail.com') ||
+          request.auth.token.email == 'smokeyfx1014@gmail.com') ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
         (hasActiveStaffDoc() && staffData().role == 'admin')
       );
