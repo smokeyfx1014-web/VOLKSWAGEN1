@@ -1,12 +1,12 @@
 {
-  "projectId": "optimal-tributary-l4mm2",
-  "appId": "1:973970975978:web:cd9841f21883f9c9c53b93",
-  "apiKey": "AIzaSyDKCcn-bKrOU6TXYRFr27dle0GBauX2kXQ",
-  "authDomain": "optimal-tributary-l4mm2.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-newcastlevolkswa-7e685877-dc66-4567-a29a-930dffb60f11",
-  "storageBucket": "optimal-tributary-l4mm2.firebasestorage.app",
-  "messagingSenderId": "973970975978",
-  "measurementId": "",
-  "oAuthClientId": "973970975978-uv3m3sal9t1o0v2dqun0o8go7se11jk9.apps.googleusercontent.com",
+  "projectId": "vwsa-c77e7",
+  "appId": "1:153179586826:web:84c4240d3c2b0dfab5faf3",
+  "apiKey": "AIzaSyB1wRkFHDbrcvqQMeavmpncMyfDaBkvlJ8",
+  "authDomain": "vwsa-c77e7.firebaseapp.com",
+  "firestoreDatabaseId": "(default)",
+  "storageBucket": "vwsa-c77e7.firebasestorage.app",
+  "messagingSenderId": "153179586826",
+  "measurementId": "G-SZ8E8WNQ3Z"
+  "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
