@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
+  BookOpen,
+  Briefcase,
   Building2,
   Car,
   Check,
@@ -9,10 +11,13 @@ import {
   Clock,
   Copy,
   Database,
+  Download,
   Edit3,
   ExternalLink,
   Eye,
   EyeOff,
+  FileCode2,
+  FileText,
   Film,
   Globe,
   HelpCircle,
@@ -35,7 +40,9 @@ import {
   Server,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
+  Ticket,
   Trash2,
   Upload,
   UserPlus,
@@ -44,6 +51,13 @@ import {
 import { useDealership, isValidBranchIdFormat } from '../context/DealershipContext';
 import { useDealershipData } from '../context/DealershipDataContext';
 import { DEALERSHIP_IMAGE_LIBRARY } from '../data/dealership';
+import { downloadProtectedCareerDoc } from '../lib/careerUpload';
+import {
+  LeadInboxSection,
+  formatLeadTypeBadge,
+  isSpotterLead,
+  matchesLeadInboxSection,
+} from '../lib/leadFilters';
 import {
   MediaUploadCategory,
   UploadedMediaType,
@@ -53,6 +67,8 @@ import {
 import { cn, formatZAR, toGoogleMapsEmbedUrl, toWhatsAppMessageHref } from '../lib/utils';
 import {
   AutoTraderSyncReport,
+  CmsJobApplication,
+  CmsJobOpening,
   CmsLeadSubmission,
   CmsNewsArticle,
   CmsPromotion,
@@ -60,14 +76,25 @@ import {
   DealershipGroupProfile,
   DealershipId,
   DealershipRecord,
+  JobApplicationMode,
+  JobApplicationStatus,
+  JobEmploymentType,
   PromotionScope,
   PromotionType,
   StaffRole,
   StaffUserProfile,
+  SystemStatusResponse,
   VehicleStatus,
 } from '../types/dealership';
+import {
+  ActiveCareerDocPreviewTarget,
+  CandidateStatusEmailModal,
+  CareerDocumentViewerModal,
+} from './CareerReviewModals';
+import { ItEscalationCenter, formatCountdown } from './ItEscalationCenter';
 import { PromotionMedia } from './PromotionMedia';
 import { SmtpPresetSelection, SmtpSetupGuideModal } from './SmtpSetupGuideModal';
+import { SystemHandoverManualModal } from './SystemHandoverManualModal';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
 type AdminTab =
@@ -77,7 +104,9 @@ type AdminTab =
   | 'users'
   | 'branches'
   | 'news'
-  | 'leads';
+  | 'careers'
+  | 'leads'
+  | 'it-tickets';
 type VisibilityChoice = 'MASTER' | DealershipId;
 
 const STAFF_ROLE_META: Record<
@@ -92,20 +121,47 @@ const STAFF_ROLE_META: Record<
   }
 > = {
   admin: {
-    label: 'Administrator',
-    shortLabel: 'Admin',
-    scopeSummary: 'Full group access + users & branches',
+    label: 'Group Administrator',
+    shortLabel: 'Group Admin',
+    scopeSummary: 'Full group access + all branches & staff',
     permissionsNote:
-      'Manage staff users, register corporate group details, add/archive branches, sync AutoTrader inventory, publish campaigns and news, and manage all leads.',
+      'Manage all staff accounts, corporate group settings, branches, AutoTrader inventory, promotions, news, careers, IT escalations, and all customer leads.',
     badgeClass: 'bg-[#001E50] text-white',
     branchRequired: false,
   },
-  agent: {
-    label: 'Car Sales Agent',
-    shortLabel: 'Sales Agent',
-    scopeSummary: 'Branch vehicles, specials & events',
+  branch_admin: {
+    label: 'Branch Admin (Dealer Principal)',
+    shortLabel: 'Branch Admin',
+    scopeSummary: 'Full operations for allocated branch',
     permissionsNote:
-      'Add, edit, mark sold, or remove manual vehicle listings and publish branch specials and dealership events.',
+      'Manage all vehicle stock, branch specials/events/competitions, all branch customer leads, branch career applications, branch staff roster, and branch IT tickets.',
+    badgeClass: 'bg-sky-100 text-[#001E50] border border-sky-300',
+    branchRequired: true,
+  },
+  it_manager: {
+    label: 'IT Manager',
+    shortLabel: 'IT Manager',
+    scopeSummary: 'Group-wide technical admin & IT ticket approvals',
+    permissionsNote:
+      'Manage group branches, SMTP email setup, AutoTrader feeds, operational staff (non-admin), and approve, resolve, reject, or revoke IT Agent role-escalation tickets.',
+    badgeClass: 'bg-violet-50 text-violet-900 border border-violet-200',
+    branchRequired: false,
+  },
+  it_agent: {
+    label: 'Branch IT Agent',
+    shortLabel: 'IT Agent',
+    scopeSummary: 'Branch IT support + timed escalation tickets',
+    permissionsNote:
+      'View branch SMTP & operational overview and submit timed role-escalation tickets to the IT Manager when elevated access is needed.',
+    badgeClass: 'bg-cyan-50 text-cyan-900 border border-cyan-200',
+    branchRequired: true,
+  },
+  agent: {
+    label: 'Car Sales Executive',
+    shortLabel: 'Sales Exec',
+    scopeSummary: 'Branch vehicles, specials, events & Spotters',
+    permissionsNote:
+      'Manage manual vehicle listings, publish branch specials and dealership events, and follow up on Spotter referral leads for their allocated dealership.',
     badgeClass: 'bg-blue-50 text-[#00437A] border border-blue-200',
     branchRequired: true,
   },
@@ -119,8 +175,8 @@ const STAFF_ROLE_META: Record<
     branchRequired: false,
   },
   parts: {
-    label: 'Parts Sales Executive',
-    shortLabel: 'Parts Exec',
+    label: 'Parts Agent',
+    shortLabel: 'Parts Agent',
     scopeSummary: 'Branch parts requests & department specials',
     permissionsNote:
       'Review and update branch Parts & Accessories requests and publish branch-scoped department specials.',
@@ -128,8 +184,8 @@ const STAFF_ROLE_META: Record<
     branchRequired: true,
   },
   service: {
-    label: 'Service Booking Clerk',
-    shortLabel: 'Service Clerk',
+    label: 'Service Booking Agent',
+    shortLabel: 'Service Agent',
     scopeSummary: 'Branch service bookings & department specials',
     permissionsNote:
       'Review and update branch Service Booking requests and publish branch-scoped department specials.',
@@ -476,7 +532,12 @@ export function AdminPortalPage() {
     todayISO,
     user,
     authReady,
+    staffRole,
+    baseStaffRole,
     isAdmin,
+    isBranchAdmin,
+    isItManager,
+    isItAgent,
     isSalesAgent,
     isMarketing,
     isPartsExec,
@@ -484,6 +545,8 @@ export function AdminPortalPage() {
     canAccessPortal,
     allocatedBranchId,
     staffProfile,
+    activeEscalation,
+    escalationRemainingSeconds,
     requiresPasswordSetup,
     isDeactivatedStaff,
     authError,
@@ -497,8 +560,11 @@ export function AdminPortalPage() {
     allPromotions,
     archivedPromotions,
     allNews,
+    allJobs,
+    jobApplications,
     leads,
     staffUsers,
+    itTickets,
     usingFallbackSeed,
     seedAllDefaultData,
     saveVehicle,
@@ -512,6 +578,10 @@ export function AdminPortalPage() {
     deletePromotion,
     saveNews,
     deleteNews,
+    saveJobOpening,
+    deleteJobOpening,
+    updateJobApplicationStatus,
+    deleteJobApplication,
     updateLeadStatus,
     deleteLead,
     createStaffUser,
@@ -528,6 +598,18 @@ export function AdminPortalPage() {
   const [promoTypeFilter, setPromoTypeFilter] = useState<'all' | PromotionType>('all');
   const [promoScopeFilter, setPromoScopeFilter] = useState<'all' | 'MASTER' | DealershipId>('all');
   const [leadBranchFilter, setLeadBranchFilter] = useState<'All' | DealershipId>('All');
+  const [leadSectionFilter, setLeadSectionFilter] = useState<LeadInboxSection>('all');
+  const [careerSubTab, setCareerSubTab] = useState<'jobs' | 'applications'>('jobs');
+  const [applicationJobFilter, setApplicationJobFilter] = useState<string>('All');
+  const [downloadingDocKey, setDownloadingDocKey] = useState<string | null>(null);
+  const [viewingCareerDoc, setViewingCareerDoc] = useState<ActiveCareerDocPreviewTarget | null>(null);
+  const [pendingStatusEmail, setPendingStatusEmail] = useState<{
+    application: CmsJobApplication;
+    targetStatus: JobApplicationStatus;
+  } | null>(null);
+  const [editingJob, setEditingJob] = useState<Omit<CmsJobOpening, 'updatedAt' | 'updatedBy'> | null>(
+    null
+  );
 
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -600,6 +682,16 @@ export function AdminPortalPage() {
     complianceOfficer: groupProfile.complianceOfficer,
     complianceEmail: groupProfile.complianceEmail,
     defaultNotifyEmail: groupProfile.defaultNotifyEmail ?? 'smokeydhlamini@gmail.com',
+    primarySiteUrl: groupProfile.primarySiteUrl ?? '',
+    smtpHost: groupProfile.smtpHost ?? 'smtp.gmail.com',
+    smtpPort: groupProfile.smtpPort ?? 465,
+    smtpUser: groupProfile.smtpUser ?? 'smokeydhlamini@gmail.com',
+    smtpFrom:
+      groupProfile.smtpFrom ??
+      `${groupProfile.groupName} <${groupProfile.smtpUser ?? 'smokeydhlamini@gmail.com'}>`,
+    smtpPassEnvKey: groupProfile.smtpPassEnvKey ?? 'SMTP_PASS',
+    licenceScannerEnabled: groupProfile.licenceScannerEnabled ?? true,
+    autotraderSyncDefault: groupProfile.autotraderSyncDefault ?? true,
     vwRoadsideTollFree: groupProfile.vwRoadsideTollFree,
     vwRoadsideCrossBorder: groupProfile.vwRoadsideCrossBorder,
     testDriveHoursSummary: groupProfile.testDriveHoursSummary,
@@ -609,6 +701,12 @@ export function AdminPortalPage() {
     defaultBranchId: groupProfile.defaultBranchId,
   }));
   const [groupSaveError, setGroupSaveError] = useState<string | null>(null);
+  const [systemStatus, setSystemStatus] = useState<SystemStatusResponse | null>(null);
+  const [loadingSystemStatus, setLoadingSystemStatus] = useState(false);
+  const [showHandoverManual, setShowHandoverManual] = useState(false);
+  const [handoverManualTab, setHandoverManualTab] = useState<
+    'env-builder' | 'acquire-apis' | 'hosting' | 'troubleshooting'
+  >('env-builder');
 
   // Nodemailer SMTP Email Dispatch status & test state
   const [emailStatus, setEmailStatus] = useState<{
@@ -646,13 +744,32 @@ export function AdminPortalPage() {
   const [addBranchError, setAddBranchError] = useState<string | null>(null);
   const [confirmDeleteBranchId, setConfirmDeleteBranchId] = useState<DealershipId | null>(null);
 
+  const isGroupOperator = isAdmin || isItManager;
+  const canViewVehicles = isGroupOperator || isBranchAdmin || isSalesAgent;
+  const canViewPromotions =
+    isGroupOperator ||
+    isBranchAdmin ||
+    isMarketing ||
+    isSalesAgent ||
+    isPartsExec ||
+    isServiceClerk;
+  const canViewUsers = isGroupOperator || isBranchAdmin;
+  const canManageStaff = isGroupOperator;
+  const canViewBranches = isGroupOperator;
+  const canViewNews = isGroupOperator || isMarketing;
+  const canViewCareers = isGroupOperator || isBranchAdmin;
+  const canViewLeads =
+    isGroupOperator || isBranchAdmin || isPartsExec || isServiceClerk || isSalesAgent;
+  const canViewItTickets = isGroupOperator || isItAgent || isBranchAdmin;
+
   const fetchEmailStatus = async (branchIdOverride?: string) => {
-    if (!user || !isAdmin) return;
+    if (!user || !(isAdmin || isItManager || isBranchAdmin || isItAgent)) return;
     setLoadingEmailStatus(true);
     setEmailStatusError(null);
     try {
       const token = await user.getIdToken();
-      const targetBranch = branchIdOverride ?? selectedBranchId;
+      const targetBranch =
+        branchIdOverride ?? (isAdmin || isItManager ? selectedBranchId : allocatedBranchId ?? selectedBranchId);
       const response = await fetch(
         `/api/email-status?branchId=${encodeURIComponent(targetBranch)}`,
         {
@@ -673,11 +790,36 @@ export function AdminPortalPage() {
     }
   };
 
-  useEffect(() => {
-    if (isAdmin && activeTab === 'branches' && user) {
-      void fetchEmailStatus(selectedBranchId);
+  const fetchSystemStatus = async () => {
+    if (!user || !(isAdmin || isItManager || isBranchAdmin || isItAgent)) return;
+    setLoadingSystemStatus(true);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch('/api/system-status', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = (await response.json()) as SystemStatusResponse;
+        setSystemStatus(data);
+      }
+    } catch {
+      // Non-fatal readiness check
+    } finally {
+      setLoadingSystemStatus(false);
     }
-  }, [isAdmin, activeTab, user, selectedBranchId]);
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    if ((isAdmin || isItManager) && activeTab === 'branches') {
+      void fetchEmailStatus(selectedBranchId);
+      void fetchSystemStatus();
+    } else if ((isBranchAdmin || isItAgent) && activeTab === 'overview' && allocatedBranchId) {
+      void fetchEmailStatus(allocatedBranchId);
+    } else if ((isAdmin || isItManager) && activeTab === 'overview') {
+      void fetchSystemStatus();
+    }
+  }, [isAdmin, isItManager, isBranchAdmin, isItAgent, activeTab, user, selectedBranchId, allocatedBranchId]);
 
   useEffect(() => {
     setGroupDraft({
@@ -687,6 +829,16 @@ export function AdminPortalPage() {
       complianceOfficer: groupProfile.complianceOfficer,
       complianceEmail: groupProfile.complianceEmail,
       defaultNotifyEmail: groupProfile.defaultNotifyEmail ?? 'smokeydhlamini@gmail.com',
+      primarySiteUrl: groupProfile.primarySiteUrl ?? '',
+      smtpHost: groupProfile.smtpHost ?? 'smtp.gmail.com',
+      smtpPort: groupProfile.smtpPort ?? 465,
+      smtpUser: groupProfile.smtpUser ?? 'smokeydhlamini@gmail.com',
+      smtpFrom:
+        groupProfile.smtpFrom ??
+        `${groupProfile.groupName} <${groupProfile.smtpUser ?? 'smokeydhlamini@gmail.com'}>`,
+      smtpPassEnvKey: groupProfile.smtpPassEnvKey ?? 'SMTP_PASS',
+      licenceScannerEnabled: groupProfile.licenceScannerEnabled ?? true,
+      autotraderSyncDefault: groupProfile.autotraderSyncDefault ?? true,
       vwRoadsideTollFree: groupProfile.vwRoadsideTollFree,
       vwRoadsideCrossBorder: groupProfile.vwRoadsideCrossBorder,
       testDriveHoursSummary: groupProfile.testDriveHoursSummary,
@@ -708,46 +860,54 @@ export function AdminPortalPage() {
     setConfirmDeleteBranchId(null);
   }, [selectedBranchId, dealershipsById, allDealerships]);
 
-  // Enforce strict role-based tab & branch filters for non-admin staff roles
+  // Enforce strict role-based tab & branch filters for all staff roles (including temporary escalations)
   useEffect(() => {
-    if (isAdmin) return;
-    if (isMarketing) {
-      if (activeTab !== 'overview' && activeTab !== 'promotions' && activeTab !== 'news') {
-        setActiveTab('overview');
-      }
-      return;
-    }
-    if (isSalesAgent && allocatedBranchId) {
+    if (isAdmin || isItManager) return;
+
+    const branchScopedOnly = !isMarketing && Boolean(allocatedBranchId);
+    if (branchScopedOnly && allocatedBranchId) {
       if (activeDealership.id !== allocatedBranchId) {
         switchPreviewBranch(allocatedBranchId);
       }
       setVehicleBranchFilter(allocatedBranchId);
-      setPromoScopeFilter(allocatedBranchId);
-      if (activeTab !== 'overview' && activeTab !== 'vehicles' && activeTab !== 'promotions') {
-        setActiveTab('overview');
-      }
-      return;
-    }
-    if ((isPartsExec || isServiceClerk) && allocatedBranchId) {
-      if (activeDealership.id !== allocatedBranchId) {
-        switchPreviewBranch(allocatedBranchId);
-      }
       setLeadBranchFilter(allocatedBranchId);
       setPromoScopeFilter(allocatedBranchId);
-      setPromoTypeFilter('special');
-      if (activeTab !== 'overview' && activeTab !== 'leads' && activeTab !== 'promotions') {
-        setActiveTab('overview');
+      if ((isPartsExec || isServiceClerk) && !isBranchAdmin) {
+        setPromoTypeFilter('special');
       }
+    }
+
+    const allowedTabs: AdminTab[] = ['overview'];
+    if (canViewVehicles) allowedTabs.push('vehicles');
+    if (canViewPromotions) allowedTabs.push('promotions');
+    if (canViewUsers) allowedTabs.push('users');
+    if (canViewBranches) allowedTabs.push('branches');
+    if (canViewNews) allowedTabs.push('news');
+    if (canViewCareers) allowedTabs.push('careers');
+    if (canViewLeads) allowedTabs.push('leads');
+    if (canViewItTickets) allowedTabs.push('it-tickets');
+
+    if (!allowedTabs.includes(activeTab)) {
+      setActiveTab('overview');
     }
   }, [
     isAdmin,
+    isItManager,
+    isBranchAdmin,
     isMarketing,
-    isSalesAgent,
     isPartsExec,
     isServiceClerk,
     allocatedBranchId,
     activeDealership.id,
     activeTab,
+    canViewVehicles,
+    canViewPromotions,
+    canViewUsers,
+    canViewBranches,
+    canViewNews,
+    canViewCareers,
+    canViewLeads,
+    canViewItTickets,
     switchPreviewBranch,
   ]);
 
@@ -804,13 +964,20 @@ export function AdminPortalPage() {
   };
 
   const scopedVehicles = useMemo(() => {
-    if (isSalesAgent && allocatedBranchId) {
+    if (isAdmin || isItManager) return allVehicles;
+    if ((isBranchAdmin || isSalesAgent) && allocatedBranchId) {
       return allVehicles.filter((v) => v.homeDealershipId === allocatedBranchId);
     }
-    return allVehicles;
-  }, [allVehicles, isSalesAgent, allocatedBranchId]);
+    return [];
+  }, [allVehicles, isAdmin, isItManager, isBranchAdmin, isSalesAgent, allocatedBranchId]);
 
   const scopedPromotions = useMemo(() => {
+    if (isAdmin || isItManager || isMarketing) return allPromotions;
+    if (isBranchAdmin && allocatedBranchId) {
+      return allPromotions.filter(
+        (p) => p.scope === 'BRANCH' && p.dealershipId === allocatedBranchId
+      );
+    }
     if (isSalesAgent && allocatedBranchId) {
       return allPromotions.filter(
         (p) =>
@@ -827,10 +994,26 @@ export function AdminPortalPage() {
           p.type === 'special'
       );
     }
-    return allPromotions;
-  }, [allPromotions, isSalesAgent, isPartsExec, isServiceClerk, allocatedBranchId]);
+    return [];
+  }, [
+    allPromotions,
+    isAdmin,
+    isItManager,
+    isMarketing,
+    isBranchAdmin,
+    isSalesAgent,
+    isPartsExec,
+    isServiceClerk,
+    allocatedBranchId,
+  ]);
 
   const scopedArchivedPromotions = useMemo(() => {
+    if (isAdmin || isItManager || isMarketing) return archivedPromotions;
+    if (isBranchAdmin && allocatedBranchId) {
+      return archivedPromotions.filter(
+        (p) => p.scope === 'BRANCH' && p.dealershipId === allocatedBranchId
+      );
+    }
     if (isSalesAgent && allocatedBranchId) {
       return archivedPromotions.filter(
         (p) =>
@@ -847,8 +1030,18 @@ export function AdminPortalPage() {
           p.type === 'special'
       );
     }
-    return archivedPromotions;
-  }, [archivedPromotions, isSalesAgent, isPartsExec, isServiceClerk, allocatedBranchId]);
+    return [];
+  }, [
+    archivedPromotions,
+    isAdmin,
+    isItManager,
+    isMarketing,
+    isBranchAdmin,
+    isSalesAgent,
+    isPartsExec,
+    isServiceClerk,
+    allocatedBranchId,
+  ]);
 
   const livePromotionsList = useMemo(
     () =>
@@ -868,7 +1061,7 @@ export function AdminPortalPage() {
     const q = searchQuery.trim().toLowerCase();
     return scopedVehicles.filter((v) => {
       if (
-        !isSalesAgent &&
+        (isAdmin || isItManager) &&
         vehicleBranchFilter !== 'All' &&
         v.homeDealershipId !== vehicleBranchFilter
       ) {
@@ -882,12 +1075,12 @@ export function AdminPortalPage() {
         v.status.toLowerCase().includes(q)
       );
     });
-  }, [scopedVehicles, isSalesAgent, vehicleBranchFilter, searchQuery]);
+  }, [scopedVehicles, isAdmin, isItManager, vehicleBranchFilter, searchQuery]);
 
   const filteredPromotions = useMemo(() => {
     const base = promoSubTab === 'active' ? livePromotionsList : scopedArchivedPromotions;
     const q = searchQuery.trim().toLowerCase();
-    const canFilterAllScopes = isAdmin || isMarketing;
+    const canFilterAllScopes = isAdmin || isItManager || isMarketing;
     return base.filter((p) => {
       if (promoTypeFilter !== 'all' && p.type !== promoTypeFilter) return false;
       if (canFilterAllScopes) {
@@ -913,6 +1106,7 @@ export function AdminPortalPage() {
     scopedArchivedPromotions,
     promoTypeFilter,
     isAdmin,
+    isItManager,
     isMarketing,
     promoScopeFilter,
     searchQuery,
@@ -928,9 +1122,17 @@ export function AdminPortalPage() {
     );
   }, [allNews, searchQuery]);
 
+  const scopedStaffUsers = useMemo(() => {
+    if (isAdmin || isItManager) return staffUsers;
+    if (isBranchAdmin && allocatedBranchId) {
+      return staffUsers.filter((s) => s.allocatedDealershipId === allocatedBranchId);
+    }
+    return [];
+  }, [staffUsers, isAdmin, isItManager, isBranchAdmin, allocatedBranchId]);
+
   const filteredStaffUsers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return staffUsers.filter((s) => {
+    return scopedStaffUsers.filter((s) => {
       if (!q) return true;
       return (
         s.fullName.toLowerCase().includes(q) ||
@@ -939,10 +1141,25 @@ export function AdminPortalPage() {
         s.role.toLowerCase().includes(q)
       );
     });
-  }, [staffUsers, searchQuery]);
+  }, [scopedStaffUsers, searchQuery]);
+
+  const scopedJobApplications = useMemo(() => {
+    if (isAdmin || isItManager) return jobApplications;
+    if (isBranchAdmin && allocatedBranchId) {
+      return jobApplications.filter((app) => app.branchId === allocatedBranchId);
+    }
+    return [];
+  }, [jobApplications, isAdmin, isItManager, isBranchAdmin, allocatedBranchId]);
 
   const scopedLeads = useMemo(() => {
-    if (isAdmin) return leads;
+    if (isAdmin || isItManager) return leads;
+    if (isBranchAdmin && allocatedBranchId) {
+      return leads.filter(
+        (l) =>
+          l.submittedAtDealershipId === allocatedBranchId ||
+          l.homeDealershipId === allocatedBranchId
+      );
+    }
     if (isPartsExec && allocatedBranchId) {
       return leads.filter(
         (l) =>
@@ -959,26 +1176,67 @@ export function AdminPortalPage() {
             l.homeDealershipId === allocatedBranchId)
       );
     }
+    if (isSalesAgent && allocatedBranchId) {
+      return leads.filter(
+        (l) =>
+          isSpotterLead(l) &&
+          (l.submittedAtDealershipId === allocatedBranchId ||
+            l.homeDealershipId === allocatedBranchId)
+      );
+    }
     return [];
-  }, [leads, isAdmin, isPartsExec, isServiceClerk, allocatedBranchId]);
+  }, [
+    leads,
+    isAdmin,
+    isItManager,
+    isBranchAdmin,
+    isPartsExec,
+    isServiceClerk,
+    isSalesAgent,
+    allocatedBranchId,
+  ]);
+
+  const leadsBeforeSection = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return scopedLeads.filter((l) => {
+      if (
+        (isAdmin || isItManager) &&
+        leadBranchFilter !== 'All' &&
+        l.submittedAtDealershipId !== leadBranchFilter
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        l.fullName.toLowerCase().includes(q) ||
+        l.subject.toLowerCase().includes(q) ||
+        l.leadType.toLowerCase().includes(q) ||
+        l.details.toLowerCase().includes(q)
+      );
+    });
+  }, [scopedLeads, isAdmin, isItManager, leadBranchFilter, searchQuery]);
+
+  const canFilterLeadSections = isAdmin || isItManager || isBranchAdmin;
+
+  const leadSectionCounts = useMemo(
+    () => ({
+      all: leadsBeforeSection.length,
+      parts: leadsBeforeSection.filter((l) => matchesLeadInboxSection(l, 'parts')).length,
+      service: leadsBeforeSection.filter((l) => matchesLeadInboxSection(l, 'service')).length,
+      spotters: leadsBeforeSection.filter((l) => matchesLeadInboxSection(l, 'spotters')).length,
+      'sales-other': leadsBeforeSection.filter((l) =>
+        matchesLeadInboxSection(l, 'sales-other')
+      ).length,
+    }),
+    [leadsBeforeSection]
+  );
 
   const sortedLeads = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return [...scopedLeads]
-      .filter((l) => {
-        if (isAdmin && leadBranchFilter !== 'All' && l.submittedAtDealershipId !== leadBranchFilter) {
-          return false;
-        }
-        if (!q) return true;
-        return (
-          l.fullName.toLowerCase().includes(q) ||
-          l.subject.toLowerCase().includes(q) ||
-          l.leadType.toLowerCase().includes(q) ||
-          l.details.toLowerCase().includes(q)
-        );
-      })
-      .sort((a, b) => (a.status === 'new' && b.status !== 'new' ? -1 : 0));
-  }, [scopedLeads, isAdmin, leadBranchFilter, searchQuery]);
+    const list = canFilterLeadSections
+      ? leadsBeforeSection.filter((l) => matchesLeadInboxSection(l, leadSectionFilter))
+      : leadsBeforeSection;
+    return [...list].sort((a, b) => (a.status === 'new' && b.status !== 'new' ? -1 : 0));
+  }, [leadsBeforeSection, canFilterLeadSections, leadSectionFilter]);
 
   const selectedBranchDeps = useMemo(
     () => getBranchDependencies(selectedBranchId),
@@ -1026,7 +1284,7 @@ export function AdminPortalPage() {
                   </>
                 ) : (
                   <>
-                    Signed in as <strong className="font-mono">{user.email}</strong>. Only authorized {groupProfile.legalEntity} staff (Administrators, Car Sales Agents, Marketing, Parts Sales Executives, and Service Booking Clerks) can access this portal.
+                    Signed in as <strong className="font-mono">{user.email}</strong>. Only authorized {groupProfile.legalEntity} staff (Group Administrators, Branch Admins, IT Managers, IT Agents, Car Sales Executives, Marketing, Parts Agents, and Service Booking Agents) can access this portal.
                   </>
                 )}
               </p>
@@ -1318,171 +1576,258 @@ export function AdminPortalPage() {
     }
   };
 
-  const navTabs = isAdmin
-    ? [
-        { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-        {
-          id: 'vehicles' as const,
-          label: `Master Stock (${scopedVehicles.length})`,
-          icon: Car,
-        },
-        {
-          id: 'promotions' as const,
-          label: `Promotions & Events (${scopedPromotions.length})`,
-          icon: Sparkles,
-        },
-        {
-          id: 'users' as const,
-          label: `Users & Roles (${staffUsers.length})`,
-          icon: Users,
-        },
-        {
-          id: 'branches' as const,
-          label: `Group & Branches (${allDealerships.length})`,
-          icon: Building2,
-        },
-        { id: 'news' as const, label: `News (${allNews.length})`, icon: Newspaper },
-        { id: 'leads' as const, label: `Leads (${scopedLeads.length})`, icon: Inbox },
-      ]
-    : isMarketing
-    ? [
-        { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-        {
-          id: 'promotions' as const,
-          label: `Promotions & Events (${scopedPromotions.length})`,
-          icon: Sparkles,
-        },
-        { id: 'news' as const, label: `Motoring News (${allNews.length})`, icon: Newspaper },
-      ]
-    : isPartsExec || isServiceClerk
-    ? [
-        { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-        {
-          id: 'leads' as const,
-          label: `${isPartsExec ? 'Parts Requests' : 'Service Bookings'} (${scopedLeads.length})`,
-          icon: Inbox,
-        },
-        {
-          id: 'promotions' as const,
-          label: `${isPartsExec ? 'Parts' : 'Service'} Specials (${scopedPromotions.length})`,
-          icon: Sparkles,
-        },
-      ]
-    : [
-        { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
-        {
-          id: 'vehicles' as const,
-          label: `${allocatedBranch?.shortName ?? 'Branch'} Stock (${scopedVehicles.length})`,
-          icon: Car,
-        },
-        {
-          id: 'promotions' as const,
-          label: `Specials & Events (${scopedPromotions.length})`,
-          icon: Sparkles,
-        },
-      ];
+  const openItTicketsCount = itTickets.filter((t) => t.status === 'open').length;
+
+  const navTabs: {
+    id: AdminTab;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  ];
+
+  if (canViewVehicles) {
+    navTabs.push({
+      id: 'vehicles',
+      label:
+        isAdmin || isItManager
+          ? `Master Stock (${scopedVehicles.length})`
+          : `${allocatedBranch?.shortName ?? 'Branch'} Stock (${scopedVehicles.length})`,
+      icon: Car,
+    });
+  }
+  if (canViewPromotions) {
+    navTabs.push({
+      id: 'promotions',
+      label:
+        isPartsExec || isServiceClerk
+          ? `${isPartsExec ? 'Parts' : 'Service'} Specials (${scopedPromotions.length})`
+          : isAdmin || isItManager || isMarketing
+          ? `Promotions & Events (${scopedPromotions.length})`
+          : `Specials & Events (${scopedPromotions.length})`,
+      icon: Sparkles,
+    });
+  }
+  if (canViewLeads) {
+    navTabs.push({
+      id: 'leads',
+      label:
+        isAdmin || isItManager || isBranchAdmin
+          ? `Leads (${scopedLeads.length})`
+          : isPartsExec
+          ? `Parts Requests (${scopedLeads.length})`
+          : isServiceClerk
+          ? `Service Bookings (${scopedLeads.length})`
+          : `Spotter Leads (${scopedLeads.length})`,
+      icon: Inbox,
+    });
+  }
+  if (canViewUsers) {
+    navTabs.push({
+      id: 'users',
+      label: isBranchAdmin
+        ? `Branch Staff (${scopedStaffUsers.length})`
+        : `Users & Roles (${scopedStaffUsers.length})`,
+      icon: Users,
+    });
+  }
+  if (canViewBranches) {
+    navTabs.push({
+      id: 'branches',
+      label: `Group & Branches (${allDealerships.length})`,
+      icon: Building2,
+    });
+  }
+  if (canViewNews) {
+    navTabs.push({
+      id: 'news',
+      label: `${isMarketing && !isAdmin && !isItManager ? 'Motoring News' : 'News'} (${allNews.length})`,
+      icon: Newspaper,
+    });
+  }
+  if (canViewCareers) {
+    navTabs.push({
+      id: 'careers',
+      label: isBranchAdmin
+        ? `Applications (${scopedJobApplications.length})`
+        : `Careers (${allJobs.length} / ${scopedJobApplications.length})`,
+      icon: Briefcase,
+    });
+  }
+  if (canViewItTickets) {
+    navTabs.push({
+      id: 'it-tickets',
+      label:
+        openItTicketsCount > 0
+          ? `IT Tickets (${openItTicketsCount} Open)`
+          : `IT Tickets (${itTickets.length})`,
+      icon: Ticket,
+    });
+  }
+
+  const effectiveBadgeRole: StaffRole =
+    staffRole ?? (isAdmin ? 'admin' : 'agent');
 
   const currentRoleLabel = isAdmin
-    ? 'Administrator · Full Group Access'
+    ? 'Group Administrator · Full Group Access'
+    : isItManager
+    ? 'IT Manager · Group Technical & Escalation Admin'
+    : isItAgent && activeEscalation
+    ? `Branch IT Agent (Temporarily Elevated: ${STAFF_ROLE_META[activeEscalation.grantedRole].shortLabel}) · ${allocatedBranch?.name ?? 'Assigned Branch'}`
+    : isItAgent
+    ? `Branch IT Agent · ${allocatedBranch?.name ?? 'Assigned Branch'}`
+    : isBranchAdmin
+    ? `Branch Admin (Dealer Principal) · ${allocatedBranch?.name ?? 'Assigned Branch'}`
     : isMarketing
     ? 'Marketing Coordinator · Group-Wide Campaigns & News'
     : isPartsExec
-    ? `Parts Sales Executive · ${allocatedBranch?.name ?? 'Assigned Branch'}`
+    ? `Parts Agent · ${allocatedBranch?.name ?? 'Assigned Branch'}`
     : isServiceClerk
-    ? `Service Booking Clerk · ${allocatedBranch?.name ?? 'Assigned Branch'}`
-    : `Car Sales Agent · ${allocatedBranch?.name ?? 'Assigned Branch'}`;
+    ? `Service Booking Agent · ${allocatedBranch?.name ?? 'Assigned Branch'}`
+    : `Car Sales Executive · ${allocatedBranch?.name ?? 'Assigned Branch'}`;
 
-  const overviewStats = isAdmin
-    ? [
-        {
-          label: 'Available Master Stock',
-          value: `${activeVehicles.length} / ${allVehicles.length}`,
-          sub: `${activeDealerships.length} active branch${activeDealerships.length === 1 ? '' : 'es'} in ${groupProfile.groupName}`,
-        },
-        {
-          label: 'Live Promotions & Events',
-          value: `${livePromotionsList.length}`,
-          sub: `${scopedArchivedPromotions.length} archived or expired`,
-        },
-        {
-          label: 'Authorized Staff Users',
-          value: `${staffUsers.filter((s) => s.active).length}`,
-          sub: `${staffUsers.filter((s) => s.mustChangePassword).length} pending first password setup`,
-        },
-        {
-          label: 'Customer Leads',
-          value: `${leads.length}`,
-          sub: `${leads.filter((l) => l.status === 'new').length} awaiting follow-up`,
-        },
-      ]
-    : isMarketing
-    ? [
-        {
-          label: 'Live Group Campaigns',
-          value: `${livePromotionsList.length}`,
-          sub: `${scopedArchivedPromotions.length} archived or expired`,
-        },
-        {
-          label: 'Active Competitions',
-          value: `${livePromotionsList.filter((p) => p.type === 'competition').length}`,
-          sub: 'Visible across selected group branches',
-        },
-        {
-          label: 'Published News Articles',
-          value: `${allNews.filter((n) => !n.archived).length} / ${allNews.length}`,
-          sub: 'Group-wide Motoring News feed',
-        },
-        {
-          label: 'Dealership Scope',
-          value: `${activeDealerships.length} Branches`,
-          sub: groupProfile.groupName,
-        },
-      ]
-    : isPartsExec || isServiceClerk
-    ? [
-        {
-          label: isPartsExec ? 'Branch Parts Requests' : 'Branch Service Bookings',
-          value: `${scopedLeads.length}`,
-          sub: `${scopedLeads.filter((l) => l.status === 'new').length} awaiting response`,
-        },
-        {
-          label: 'Handled / Contacted',
-          value: `${scopedLeads.filter((l) => l.status === 'contacted').length}`,
-          sub: `${scopedLeads.filter((l) => l.status === 'archived').length} archived`,
-        },
-        {
-          label: 'Live Department Specials',
-          value: `${livePromotionsList.length}`,
-          sub: `${scopedArchivedPromotions.length} archived or expired`,
-        },
-        {
-          label: 'Allocated Dealership',
-          value: allocatedBranch?.shortName ?? `ID ${allocatedBranchId ?? '—'}`,
-          sub: allocatedBranch?.domain ?? '',
-        },
-      ]
-    : [
-        {
-          label: `${allocatedBranch?.shortName ?? 'Branch'} Total Stock`,
-          value: `${scopedVehicles.length}`,
-          sub: `${scopedVehicles.filter((v) => v.status === 'available').length} currently available`,
-        },
-        {
-          label: 'Manual Branch Vehicles',
-          value: `${manualVehiclesCount}`,
-          sub: `Editable vehicles held at ${allocatedBranch?.shortName ?? 'your branch'}`,
-        },
-        {
-          label: 'Live Specials & Events',
-          value: `${livePromotionsList.length}`,
-          sub: `${scopedArchivedPromotions.length} archived or expired`,
-        },
-        {
-          label: 'Allocated Dealership',
-          value: allocatedBranch?.shortName ?? `ID ${allocatedBranchId ?? '—'}`,
-          sub: allocatedBranch?.domain ?? '',
-        },
-      ];
+  const overviewStats =
+    isAdmin || isItManager
+      ? [
+          {
+            label: 'Available Master Stock',
+            value: `${activeVehicles.length} / ${allVehicles.length}`,
+            sub: `${activeDealerships.length} active branch${activeDealerships.length === 1 ? '' : 'es'} in ${groupProfile.groupName}`,
+          },
+          {
+            label: 'Live Promotions & Events',
+            value: `${livePromotionsList.length}`,
+            sub: `${scopedArchivedPromotions.length} archived or expired`,
+          },
+          {
+            label: isItManager ? 'Open IT Escalations' : 'Authorized Staff Users',
+            value: isItManager
+              ? `${openItTicketsCount}`
+              : `${staffUsers.filter((s) => s.active).length}`,
+            sub: isItManager
+              ? `${itTickets.filter((t) => t.status === 'approved_temporary').length} temporary grant(s) logged`
+              : `${staffUsers.filter((s) => s.mustChangePassword).length} pending first password setup`,
+          },
+          {
+            label: 'Customer Leads',
+            value: `${leads.length}`,
+            sub: `${leads.filter((l) => l.status === 'new').length} awaiting follow-up`,
+          },
+        ]
+      : isBranchAdmin
+      ? [
+          {
+            label: `${allocatedBranch?.shortName ?? 'Branch'} Stock`,
+            value: `${scopedVehicles.filter((v) => v.status === 'available').length} / ${scopedVehicles.length}`,
+            sub: 'Available / total vehicles held at branch',
+          },
+          {
+            label: 'Branch Customer Leads',
+            value: `${scopedLeads.length}`,
+            sub: `${scopedLeads.filter((l) => l.status === 'new').length} new · ${scopedLeads.filter((l) => isSpotterLead(l)).length} Spotters`,
+          },
+          {
+            label: 'Branch Careers & Campaigns',
+            value: `${scopedJobApplications.length} / ${livePromotionsList.length}`,
+            sub: 'Job applications / live branch promos',
+          },
+          {
+            label: 'Branch Staff & IT Tickets',
+            value: `${scopedStaffUsers.filter((s) => s.active).length} / ${openItTicketsCount}`,
+            sub: 'Active staff / open IT requests',
+          },
+        ]
+      : isItAgent && !activeEscalation
+      ? [
+          {
+            label: 'Allocated Dealership',
+            value: allocatedBranch?.shortName ?? `ID ${allocatedBranchId ?? '—'}`,
+            sub: allocatedBranch?.domain ?? '',
+          },
+          {
+            label: 'Open IT Tickets',
+            value: `${itTickets.filter((t) => t.status === 'open').length}`,
+            sub: 'Awaiting IT Manager review',
+          },
+          {
+            label: 'Total Branch IT Tickets',
+            value: `${itTickets.length}`,
+            sub: `${itTickets.filter((t) => t.status === 'resolved').length} resolved directly`,
+          },
+          {
+            label: 'Escalation Status',
+            value: 'Standard IT Scope',
+            sub: 'Submit a ticket to request timed role access',
+          },
+        ]
+      : isMarketing
+      ? [
+          {
+            label: 'Live Group Campaigns',
+            value: `${livePromotionsList.length}`,
+            sub: `${scopedArchivedPromotions.length} archived or expired`,
+          },
+          {
+            label: 'Active Competitions',
+            value: `${livePromotionsList.filter((p) => p.type === 'competition').length}`,
+            sub: 'Visible across selected group branches',
+          },
+          {
+            label: 'Published News Articles',
+            value: `${allNews.filter((n) => !n.archived).length} / ${allNews.length}`,
+            sub: 'Group-wide Motoring News feed',
+          },
+          {
+            label: 'Dealership Scope',
+            value: `${activeDealerships.length} Branches`,
+            sub: groupProfile.groupName,
+          },
+        ]
+      : isPartsExec || isServiceClerk
+      ? [
+          {
+            label: isPartsExec ? 'Branch Parts Requests' : 'Branch Service Bookings',
+            value: `${scopedLeads.length}`,
+            sub: `${scopedLeads.filter((l) => l.status === 'new').length} awaiting response`,
+          },
+          {
+            label: 'Handled / Contacted',
+            value: `${scopedLeads.filter((l) => l.status === 'contacted').length}`,
+            sub: `${scopedLeads.filter((l) => l.status === 'archived').length} archived`,
+          },
+          {
+            label: 'Live Department Specials',
+            value: `${livePromotionsList.length}`,
+            sub: `${scopedArchivedPromotions.length} archived or expired`,
+          },
+          {
+            label: 'Allocated Dealership',
+            value: allocatedBranch?.shortName ?? `ID ${allocatedBranchId ?? '—'}`,
+            sub: allocatedBranch?.domain ?? '',
+          },
+        ]
+      : [
+          {
+            label: `${allocatedBranch?.shortName ?? 'Branch'} Total Stock`,
+            value: `${scopedVehicles.length}`,
+            sub: `${scopedVehicles.filter((v) => v.status === 'available').length} currently available`,
+          },
+          {
+            label: 'Spotter Referral Leads',
+            value: `${scopedLeads.length}`,
+            sub: `${scopedLeads.filter((l) => l.status === 'new').length} awaiting sales follow-up`,
+          },
+          {
+            label: 'Live Specials & Events',
+            value: `${livePromotionsList.length}`,
+            sub: `${scopedArchivedPromotions.length} archived or expired`,
+          },
+          {
+            label: 'Allocated Dealership',
+            value: allocatedBranch?.shortName ?? `ID ${allocatedBranchId ?? '—'}`,
+            sub: allocatedBranch?.domain ?? '',
+          },
+        ];
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] pt-24 pb-20">
@@ -1497,17 +1842,7 @@ export function AdminPortalPage() {
               <span
                 className={cn(
                   'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
-                  STAFF_ROLE_META[
-                    isAdmin
-                      ? 'admin'
-                      : isMarketing
-                      ? 'marketing'
-                      : isPartsExec
-                      ? 'parts'
-                      : isServiceClerk
-                      ? 'service'
-                      : 'agent'
-                  ].badgeClass
+                  STAFF_ROLE_META[effectiveBadgeRole].badgeClass
                 )}
               >
                 <Shield className="h-3 w-3" />
@@ -1517,13 +1852,19 @@ export function AdminPortalPage() {
             <h1 className="mt-1.5 font-display text-2xl sm:text-3xl font-semibold text-[#091224]">
               {isAdmin
                 ? `${groupProfile.groupName} — Multi-Branch Admin Portal`
+                : isItManager
+                ? `${groupProfile.groupName} — IT Manager Operations Console`
+                : isBranchAdmin
+                ? `${allocatedBranch?.name ?? 'Branch'} — Dealer Principal Desk`
+                : isItAgent
+                ? `${allocatedBranch?.name ?? 'Branch'} — Branch IT Workspace`
                 : isMarketing
                 ? `${groupProfile.groupName} — Marketing Workspace`
                 : isPartsExec
                 ? `${allocatedBranch?.name ?? 'Branch'} Parts Workspace`
                 : isServiceClerk
                 ? `${allocatedBranch?.name ?? 'Branch'} Service Booking Desk`
-                : `${allocatedBranch?.name ?? 'Branch'} Sales Workspace`}
+                : `${allocatedBranch?.name ?? 'Branch'} Sales & Spotters Workspace`}
             </h1>
             <p className="mt-1 text-xs text-[#475569]">
               Signed in as{' '}
@@ -1532,10 +1873,31 @@ export function AdminPortalPage() {
               </span>{' '}
               (<span className="font-mono text-[#091224]">{user.email}</span>) · Previewing{' '}
               <strong className="text-[#001E50]">{activeDealership.name}</strong> (ID {activeDealership.id})
+              {baseStaffRole === 'it_agent' && activeEscalation && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded bg-amber-100 px-2 py-0.5 font-mono font-semibold text-amber-950">
+                  <Clock className="h-3 w-3" />
+                  Elevated: {formatCountdown(escalationRemainingSeconds)}
+                </span>
+              )}
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {(isAdmin || isItManager) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void fetchSystemStatus();
+                  setHandoverManualTab('env-builder');
+                  setShowHandoverManual(true);
+                }}
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                <span>Setup Manual &amp; .env / APIs</span>
+              </Button>
+            )}
+
             {isAdmin && (
               <Button
                 variant="outline"
@@ -1554,6 +1916,36 @@ export function AdminPortalPage() {
             </Button>
           </div>
         </div>
+
+        {isItAgent && activeEscalation && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-5 py-3.5 text-xs text-amber-950">
+            <div className="flex items-start gap-2.5">
+              <ShieldCheck className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-semibold">
+                  Temporary Role Escalation Active: {STAFF_ROLE_META[activeEscalation.grantedRole].label}
+                </p>
+                <p className="text-amber-900">
+                  Approved by {activeEscalation.grantedBy} (Ticket{' '}
+                  <span className="font-mono">{activeEscalation.ticketId}</span>). Access reverts automatically to standard Branch IT Agent permissions when the timer expires.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span className="rounded-lg bg-white border border-amber-300 px-3 py-1.5 font-mono text-xs font-bold text-amber-950 tabular-nums">
+                {formatCountdown(escalationRemainingSeconds)} remaining
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveTab('it-tickets')}
+              >
+                <Ticket className="h-3.5 w-3.5" />
+                <span>View Ticket</span>
+              </Button>
+            </div>
+          </div>
+        )}
 
         {isAdmin && usingFallbackSeed && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 px-5 py-4 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-3">
@@ -1641,7 +2033,7 @@ export function AdminPortalPage() {
               ))}
             </div>
 
-            {isSalesAgent && allocatedBranch && (
+            {isSalesAgent && !isAdmin && !isItManager && !isBranchAdmin && allocatedBranch && (
               <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1649,10 +2041,14 @@ export function AdminPortalPage() {
                       Assigned Dealership · Branch ID {allocatedBranch.id} ({allocatedBranch.domain})
                     </span>
                     <h2 className="font-display text-lg font-semibold text-[#091224]">
-                      {allocatedBranch.name} — Car Sales Agent Permissions
+                      {allocatedBranch.name} — Car Sales Executive Permissions
                     </h2>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('leads')}>
+                      <Inbox className="h-3.5 w-3.5" />
+                      <span>Spotter Leads ({scopedLeads.length})</span>
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => setActiveTab('vehicles')}>
                       <Car className="h-3.5 w-3.5" />
                       <span>Manage Branch Stock</span>
@@ -1664,12 +2060,152 @@ export function AdminPortalPage() {
                   </div>
                 </div>
                 <p className="text-xs leading-relaxed text-[#475569]">
-                  Your Car Sales Agent account is scoped strictly to <strong>{allocatedBranch.name}</strong>. You can add, edit, mark sold, or remove manual vehicle listings and publish specials or dealership events for your allocated dealership. User administration, AutoTrader feed sync, and group branch settings remain restricted to Administrators.
+                  Your Car Sales Executive account is scoped strictly to <strong>{allocatedBranch.name}</strong>. You can add, edit, mark sold, or remove manual vehicle listings, publish branch specials or events, and follow up on Spotter referral leads submitted for your branch.
                 </p>
               </div>
             )}
 
-            {isMarketing && (
+            {isBranchAdmin && !isAdmin && !isItManager && allocatedBranch && (
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-mono font-semibold text-[#00437A]">
+                      Dealer Principal Scope · Branch ID {allocatedBranch.id} ({allocatedBranch.domain})
+                    </span>
+                    <h2 className="font-display text-lg font-semibold text-[#091224]">
+                      {allocatedBranch.name} — Branch Admin Workspace
+                    </h2>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('leads')}>
+                      <Inbox className="h-3.5 w-3.5" />
+                      <span>Branch Leads ({scopedLeads.length})</span>
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('vehicles')}>
+                      <Car className="h-3.5 w-3.5" />
+                      <span>Branch Stock</span>
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('careers')}>
+                      <Briefcase className="h-3.5 w-3.5" />
+                      <span>Applications ({scopedJobApplications.length})</span>
+                    </Button>
+                    <Button size="sm" onClick={() => setActiveTab('it-tickets')}>
+                      <Ticket className="h-3.5 w-3.5" />
+                      <span>IT Tickets ({openItTicketsCount} Open)</span>
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-[#475569]">
+                  Your Branch Admin account oversees all dealership operations for <strong>{allocatedBranch.name}</strong> — including Parts, Service, Spotters, Sales leads, vehicle stock, specials/competitions, career applicant reviews, staff roster visibility, and branch IT tickets.
+                </p>
+
+                {emailStatus?.branchStatus && (
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div>
+                      <p className="font-semibold text-[#091224]">
+                        Branch Outgoing Email (Nodemailer SMTP):{' '}
+                        <span
+                          className={
+                            emailStatus.branchStatus.effectiveReady
+                              ? 'text-emerald-700'
+                              : 'text-amber-700'
+                          }
+                        >
+                          {emailStatus.branchStatus.effectiveReady
+                            ? 'Ready & Connected'
+                            : `Waiting for ${emailStatus.branchStatus.branchPassKey}`}
+                        </span>
+                      </p>
+                      <p className="text-[#475569] mt-0.5">
+                        Sender: <span className="font-mono">{emailStatus.branchStatus.configuredFrom}</span> · Host:{' '}
+                        <span className="font-mono">
+                          {emailStatus.branchStatus.configuredHost}:{emailStatus.branchStatus.configuredPort}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isItAgent && !isBranchAdmin && !isAdmin && !isItManager && allocatedBranch && (
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-mono font-semibold text-[#00437A]">
+                      IT Support Scope · Branch ID {allocatedBranch.id} ({allocatedBranch.domain})
+                    </span>
+                    <h2 className="font-display text-lg font-semibold text-[#091224]">
+                      {allocatedBranch.name} — Branch IT Agent Console
+                    </h2>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => setActiveTab('it-tickets')}>
+                      <Ticket className="h-3.5 w-3.5" />
+                      <span>IT Escalation Tickets ({itTickets.length})</span>
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-[#475569]">
+                  As Branch IT Agent for <strong>{allocatedBranch.name}</strong>, you can monitor your branch&apos;s email/SMTP readiness and submit timed role-escalation tickets to the Group IT Manager whenever temporary elevated dealership access is required.
+                </p>
+
+                {emailStatus?.branchStatus && (
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div>
+                      <p className="font-semibold text-[#091224]">
+                        Branch Outgoing Mail Readiness:{' '}
+                        <span
+                          className={
+                            emailStatus.branchStatus.effectiveReady
+                              ? 'text-emerald-700'
+                              : 'text-amber-700'
+                          }
+                        >
+                          {emailStatus.branchStatus.effectiveReady
+                            ? 'SMTP Connected'
+                            : `Secret ${emailStatus.branchStatus.branchPassKey} Required`}
+                        </span>
+                      </p>
+                      <p className="text-[#475569] mt-0.5">
+                        Host: <span className="font-mono">{emailStatus.branchStatus.configuredHost}:{emailStatus.branchStatus.configuredPort}</span> · Sender:{' '}
+                        <span className="font-mono">{emailStatus.branchStatus.configuredUser}</span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isItManager && !isAdmin && (
+              <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-mono font-semibold text-[#00437A]">
+                      Group-Wide Technical Control · {groupProfile.groupName}
+                    </span>
+                    <h2 className="font-display text-lg font-semibold text-[#091224]">
+                      IT Manager Operations &amp; Ticket Governance
+                    </h2>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => setActiveTab('it-tickets')}>
+                      <Ticket className="h-3.5 w-3.5" />
+                      <span>Review IT Tickets ({openItTicketsCount} Open)</span>
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('branches')}>
+                      <Server className="h-3.5 w-3.5" />
+                      <span>Branch SMTP &amp; Sync</span>
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-[#475569]">
+                  You hold group-wide operational access across all branches — including reviewing IT Agent escalation requests (Grant Timed Access, Resolve Directly, Reject, or Revoke Early), configuring branch SMTP &amp; AutoTrader sync, and managing operational staff accounts (Group Admin &amp; IT Manager privileges remain reserved for Group Administrators).
+                </p>
+              </div>
+            )}
+
+            {isMarketing && !isAdmin && !isItManager && !isBranchAdmin && (
               <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1697,7 +2233,7 @@ export function AdminPortalPage() {
               </div>
             )}
 
-            {(isPartsExec || isServiceClerk) && allocatedBranch && (
+            {(isPartsExec || isServiceClerk) && !isAdmin && !isItManager && !isBranchAdmin && allocatedBranch && (
               <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1706,7 +2242,7 @@ export function AdminPortalPage() {
                     </span>
                     <h2 className="font-display text-lg font-semibold text-[#091224]">
                       {allocatedBranch.name} —{' '}
-                      {isPartsExec ? 'Parts Sales Executive' : 'Service Booking Clerk'} Permissions
+                      {isPartsExec ? 'Parts Agent' : 'Service Booking Agent'} Permissions
                     </h2>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1729,8 +2265,8 @@ export function AdminPortalPage() {
               </div>
             )}
 
-            {/* Dynamic Dealership Quick Cards + Live Preview Switcher (Admin Only) */}
-            {isAdmin && (
+            {/* Dynamic Dealership Quick Cards + Live Preview Switcher (Group Admin & IT Manager) */}
+            {(isAdmin || isItManager) && (
               <div className="rounded-2xl border border-[#E2E8F0] bg-white p-6 space-y-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -1831,16 +2367,16 @@ export function AdminPortalPage() {
         )}
 
         {/* MASTER GROUP STOCK / BRANCH STOCK (VEHICLES) TAB */}
-        {activeTab === 'vehicles' && (
+        {canViewVehicles && activeTab === 'vehicles' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-3">
                 <h2 className="font-display text-lg font-semibold text-[#091224]">
-                  {isAdmin
+                  {isAdmin || isItManager
                     ? 'Master Group Stock (New, Used & MasterCars)'
                     : `${allocatedBranch?.name ?? 'Branch'} Vehicle Stock`}
                 </h2>
-                {isAdmin ? (
+                {isAdmin || isItManager ? (
                   <Select
                     value={vehicleBranchFilter}
                     onChange={(e) => setVehicleBranchFilter(e.target.value as 'All' | DealershipId)}
@@ -1862,7 +2398,7 @@ export function AdminPortalPage() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
-                {isAdmin && (
+                {(isAdmin || isItManager) && (
                   <>
                     <Button
                       variant="outline"
@@ -1958,7 +2494,7 @@ export function AdminPortalPage() {
                 >
                   <Plus className="h-4 w-4" />
                   <span>
-                    {isAdmin
+                    {isAdmin || isItManager
                       ? 'Add Vehicle to Group Stock'
                       : `Add Vehicle to ${allocatedBranch?.shortName ?? 'Branch'}`}
                   </span>
@@ -2118,7 +2654,7 @@ export function AdminPortalPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3.5 text-right">
-                          {isSalesAgent && isAutoTrader ? (
+                          {isSalesAgent && !isAdmin && !isItManager && !isBranchAdmin && isAutoTrader ? (
                             <span className="text-[11px] font-medium text-[#64748B]">
                               AutoTrader Feed
                             </span>
@@ -2167,7 +2703,7 @@ export function AdminPortalPage() {
         )}
 
         {/* SCOPED PROMOTIONS, EVENTS & COMPETITIONS TAB */}
-        {activeTab === 'promotions' && (
+        {canViewPromotions && activeTab === 'promotions' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -2207,11 +2743,13 @@ export function AdminPortalPage() {
                     <option value="all">All Types</option>
                     <option value="special">Specials</option>
                     <option value="event">Events</option>
-                    {(isAdmin || isMarketing) && <option value="competition">Competitions</option>}
+                    {(isAdmin || isItManager || isMarketing || isBranchAdmin) && (
+                      <option value="competition">Competitions</option>
+                    )}
                   </Select>
                 )}
 
-                {(isAdmin || isMarketing) && (
+                {(isAdmin || isItManager || isMarketing) && (
                   <Select
                     value={promoScopeFilter}
                     onChange={(e) =>
@@ -2232,7 +2770,7 @@ export function AdminPortalPage() {
 
               <Button
                 onClick={() => {
-                  const isBranchLimited = isSalesAgent || isPartsExec || isServiceClerk;
+                  const isBranchLimited = !(isAdmin || isItManager || isMarketing);
                   setEditingPromo({
                     id: `promo-${Date.now()}`,
                     title: '',
@@ -2257,8 +2795,10 @@ export function AdminPortalPage() {
               >
                 <Plus className="h-4 w-4" />
                 <span>
-                  {isAdmin || isMarketing
+                  {isAdmin || isItManager || isMarketing
                     ? 'Add Special / Event / Competition'
+                    : isBranchAdmin
+                    ? `Add ${allocatedBranch?.shortName ?? 'Branch'} Special / Event / Draw`
                     : isPartsExec
                     ? `Add ${allocatedBranch?.shortName ?? 'Branch'} Parts Special`
                     : isServiceClerk
@@ -2389,61 +2929,79 @@ export function AdminPortalPage() {
           </div>
         )}
 
-        {/* USERS & ROLES TAB (ADMINISTRATOR ONLY) */}
-        {isAdmin && activeTab === 'users' && (
+        {/* USERS & ROLES TAB (GROUP ADMIN, IT MANAGER & BRANCH ADMIN ROSTER) */}
+        {canViewUsers && activeTab === 'users' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-display text-lg font-semibold text-[#091224]">
-                  Dealership Staff Users &amp; Access Roles
+                  {isBranchAdmin && !isAdmin && !isItManager
+                    ? `${allocatedBranch?.name ?? 'Branch'} Staff Roster (Read-Only)`
+                    : 'Dealership Staff Users & Access Roles'}
                 </h2>
                 <p className="text-xs text-[#475569]">
-                  Add Administrators, Car Sales Agents, Marketing Coordinators, Parts Sales Executives, or Service Booking Clerks. New staff must configure a personal password on first sign-in.
+                  {isBranchAdmin && !isAdmin && !isItManager
+                    ? 'View staff roles assigned to your dealership branch. Creating or modifying accounts is managed by Group Administrators or IT Managers.'
+                    : 'Add Branch Admins, IT Agents, Car Sales Executives, Marketing, Parts Agents, Service Booking Agents, or Group/IT Managers. New staff configure a personal password on first sign-in.'}
                 </p>
               </div>
 
-              <Button
-                onClick={() => {
-                  setNewStaffFullName('');
-                  setNewStaffPhone('');
-                  setNewStaffEmail('');
-                  setNewStaffRole('agent');
-                  setNewStaffBranchId(activeDealerships[0]?.id ?? activeDealership.id);
-                  setNewStaffPassword(generateSecureRandomPassword(12));
-                  setStaffModalError(null);
-                  setCreatedStaffReceipt(null);
-                  setShowCreateStaffModal(true);
-                }}
-              >
-                <UserPlus className="h-4 w-4" />
-                <span>Add Staff User</span>
-              </Button>
+              {canManageStaff && (
+                <Button
+                  onClick={() => {
+                    setNewStaffFullName('');
+                    setNewStaffPhone('');
+                    setNewStaffEmail('');
+                    setNewStaffRole('agent');
+                    setNewStaffBranchId(activeDealerships[0]?.id ?? activeDealership.id);
+                    setNewStaffPassword(generateSecureRandomPassword(12));
+                    setStaffModalError(null);
+                    setCreatedStaffReceipt(null);
+                    setShowCreateStaffModal(true);
+                  }}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  <span>Add Staff User</span>
+                </Button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
-                <p className="text-xs text-[#64748B]">Administrators</p>
+                <p className="text-xs text-[#64748B]">Group &amp; Branch Admins</p>
                 <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
-                  {staffUsers.filter((s) => s.role === 'admin' && s.active).length}
+                  {
+                    scopedStaffUsers.filter(
+                      (s) => (s.role === 'admin' || s.role === 'branch_admin') && s.active
+                    ).length
+                  }
                 </p>
               </div>
               <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
-                <p className="text-xs text-[#64748B]">Car Sales Agents</p>
+                <p className="text-xs text-[#64748B]">IT Managers &amp; Agents</p>
                 <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
-                  {staffUsers.filter((s) => s.role === 'agent' && s.active).length}
+                  {
+                    scopedStaffUsers.filter(
+                      (s) => (s.role === 'it_manager' || s.role === 'it_agent') && s.active
+                    ).length
+                  }
                 </p>
               </div>
               <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
-                <p className="text-xs text-[#64748B]">Marketing Team</p>
+                <p className="text-xs text-[#64748B]">Sales &amp; Marketing</p>
                 <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
-                  {staffUsers.filter((s) => s.role === 'marketing' && s.active).length}
+                  {
+                    scopedStaffUsers.filter(
+                      (s) => (s.role === 'agent' || s.role === 'marketing') && s.active
+                    ).length
+                  }
                 </p>
               </div>
               <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
                 <p className="text-xs text-[#64748B]">Parts &amp; Service Desk</p>
                 <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
                   {
-                    staffUsers.filter(
+                    scopedStaffUsers.filter(
                       (s) => (s.role === 'parts' || s.role === 'service') && s.active
                     ).length
                   }
@@ -2452,7 +3010,7 @@ export function AdminPortalPage() {
               <div className="rounded-xl border border-[#E2E8F0] bg-white p-4">
                 <p className="text-xs text-[#64748B]">Pending First Setup</p>
                 <p className="mt-1 font-mono text-xl font-semibold text-[#001E50] tabular-nums">
-                  {staffUsers.filter((s) => s.mustChangePassword && s.active).length}
+                  {scopedStaffUsers.filter((s) => s.mustChangePassword && s.active).length}
                 </p>
               </div>
             </div>
@@ -2460,10 +3018,12 @@ export function AdminPortalPage() {
             {filteredStaffUsers.length === 0 ? (
               <div className="rounded-2xl border border-[#E2E8F0] bg-white p-12 text-center space-y-3">
                 <p className="text-sm font-medium text-[#091224]">
-                  No staff user profiles added yet
+                  No staff user profiles found
                 </p>
                 <p className="text-xs text-[#475569] max-w-md mx-auto">
-                  Click <strong>Add Staff User</strong> above to assign Sales Agents, Marketing, Parts Executives, Service Booking Clerks, or co-Administrators across {groupProfile.groupName} branches.
+                  {canManageStaff
+                    ? `Click Add Staff User above to assign staff across ${groupProfile.groupName} branches.`
+                    : `No staff profiles are currently allocated to ${allocatedBranch?.name ?? 'this branch'}.`}
                 </p>
               </div>
             ) : (
@@ -2476,7 +3036,7 @@ export function AdminPortalPage() {
                       <th className="px-4 py-3">Allocated Dealership</th>
                       <th className="px-4 py-3">Password Setup</th>
                       <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3 text-right">Actions</th>
+                      {canManageStaff && <th className="px-4 py-3 text-right">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#E2E8F0]">
@@ -2486,6 +3046,8 @@ export function AdminPortalPage() {
                         : null;
                       const isSelf = staff.uid === user.uid;
                       const roleMeta = STAFF_ROLE_META[staff.role] ?? STAFF_ROLE_META.agent;
+                      const isProtectedRow =
+                        !isAdmin && (staff.role === 'admin' || staff.role === 'it_manager');
 
                       return (
                         <tr key={staff.uid} className="hover:bg-[#F8FAFC]">
@@ -2550,82 +3112,88 @@ export function AdminPortalPage() {
                               {staff.active ? 'Active' : 'Suspended'}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-right">
-                            {confirmRemoveStaffUid === staff.uid ? (
-                              <div className="inline-flex items-center gap-1.5">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => setConfirmRemoveStaffUid(null)}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={async () => {
-                                    try {
-                                      await removeStaffUser(staff.uid);
-                                      setConfirmRemoveStaffUid(null);
-                                      showFlash(
-                                        `Removed ${staff.fullName} and revoked dealership access.`
-                                      );
-                                    } catch (err) {
-                                      setActionError(
-                                        err instanceof Error
-                                          ? err.message
-                                          : 'Unable to remove staff user.'
-                                      );
-                                    }
-                                  }}
-                                  className="bg-red-600 hover:bg-red-700 text-white"
-                                >
-                                  Confirm Remove
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="inline-flex items-center gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  title="Edit Role / Dealership / Details"
-                                  onClick={() => setEditingStaffUser({ ...staff })}
-                                >
-                                  <Edit3 className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  title="Send Password Reset Email"
-                                  onClick={async () => {
-                                    try {
-                                      await sendStaffPasswordReset(staff.email);
-                                      showFlash(
-                                        `Password reset link sent to ${staff.email}.`
-                                      );
-                                    } catch (err) {
-                                      setActionError(
-                                        err instanceof Error
-                                          ? err.message
-                                          : 'Unable to send reset email.'
-                                      );
-                                    }
-                                  }}
-                                >
-                                  <Mail className="h-3.5 w-3.5 text-[#00437A]" />
-                                </Button>
-                                {!isSelf && (
+                          {canManageStaff && (
+                            <td className="px-4 py-3.5 text-right">
+                              {isProtectedRow ? (
+                                <span className="text-[11px] font-medium text-[#64748B]">
+                                  Group Admin Only
+                                </span>
+                              ) : confirmRemoveStaffUid === staff.uid ? (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setConfirmRemoveStaffUid(null)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    onClick={async () => {
+                                      try {
+                                        await removeStaffUser(staff.uid);
+                                        setConfirmRemoveStaffUid(null);
+                                        showFlash(
+                                          `Removed ${staff.fullName} and revoked dealership access.`
+                                        );
+                                      } catch (err) {
+                                        setActionError(
+                                          err instanceof Error
+                                            ? err.message
+                                            : 'Unable to remove staff user.'
+                                        );
+                                      }
+                                    }}
+                                    className="bg-red-600 hover:bg-red-700 text-white"
+                                  >
+                                    Confirm Remove
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="inline-flex items-center gap-1">
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    title="Remove Staff User"
-                                    onClick={() => setConfirmRemoveStaffUid(staff.uid)}
+                                    title="Edit Role / Dealership / Details"
+                                    onClick={() => setEditingStaffUser({ ...staff })}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                                    <Edit3 className="h-3.5 w-3.5" />
                                   </Button>
-                                )}
-                              </div>
-                            )}
-                          </td>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="Send Password Reset Email"
+                                    onClick={async () => {
+                                      try {
+                                        await sendStaffPasswordReset(staff.email);
+                                        showFlash(
+                                          `Password reset link sent to ${staff.email}.`
+                                        );
+                                      } catch (err) {
+                                        setActionError(
+                                          err instanceof Error
+                                            ? err.message
+                                            : 'Unable to send reset email.'
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    <Mail className="h-3.5 w-3.5 text-[#00437A]" />
+                                  </Button>
+                                  {isAdmin && !isSelf && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      title="Remove Staff User"
+                                      onClick={() => setConfirmRemoveStaffUid(staff.uid)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -2637,12 +3205,13 @@ export function AdminPortalPage() {
         )}
 
         {/* GROUP & BRANCHES TAB */}
-        {isAdmin && activeTab === 'branches' && (
+        {canViewBranches && activeTab === 'branches' && (
           <div className="space-y-6">
             {/* White-Label Dealership Group Corporate Registration */}
             <form
               onSubmit={async (e) => {
                 e.preventDefault();
+                if (!isAdmin) return;
                 setBusyAction(true);
                 setGroupSaveError(null);
                 try {
@@ -2667,13 +3236,17 @@ export function AdminPortalPage() {
                     Dealership Group Corporate Profile
                   </h2>
                   <p className="text-xs text-[#475569]">
-                    Configure group branding, FSP registration, POPIA officer, roadside numbers, and default fallback branch across all public pages.
+                    {isAdmin
+                      ? 'Configure group branding, FSP registration, POPIA officer, roadside numbers, and default fallback branch across all public pages.'
+                      : 'Corporate group profile & FSP details (view-only for IT Manager; branch configurations & SMTP settings below are editable).'}
                   </p>
                 </div>
-                <Button type="submit" disabled={busyAction}>
-                  <Save className="h-4 w-4" />
-                  <span>Save Group Profile</span>
-                </Button>
+                {isAdmin && (
+                  <Button type="submit" disabled={busyAction}>
+                    <Save className="h-4 w-4" />
+                    <span>Save Group Profile</span>
+                  </Button>
+                )}
               </div>
 
               {groupSaveError && (
@@ -2807,6 +3380,177 @@ export function AdminPortalPage() {
                     }
                     required
                   />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Primary Website / Vercel Hosting URL (APP_URL)</Label>
+                  <Input
+                    type="url"
+                    value={groupDraft.primarySiteUrl ?? ''}
+                    placeholder="https://your-dealership.vercel.app or https://www.yourgroup.co.za"
+                    onChange={(e) =>
+                      setGroupDraft({ ...groupDraft, primarySiteUrl: e.target.value })
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Group Fallback Outgoing Mail & Required APIs Registration */}
+              <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF]/60 p-5 space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <FileCode2 className="h-4 w-4 text-[#001E50]" />
+                      <h3 className="font-display text-sm font-semibold text-[#091224]">
+                        Group Hosting, API Integrations &amp; Fallback Mail Defaults
+                      </h3>
+                    </div>
+                    <p className="mt-1 text-xs text-[#475569]">
+                      Configure group-wide defaults for <code>.env</code> / Vercel Environment Variables and inspect live API secret readiness. Raw API keys &amp; passwords are never stored in the database.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        void fetchSystemStatus();
+                        setHandoverManualTab('acquire-apis');
+                        setShowHandoverManual(true);
+                      }}
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      <span>How to Acquire APIs &amp; Examples</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        void fetchSystemStatus();
+                        setHandoverManualTab('env-builder');
+                        setShowHandoverManual(true);
+                      }}
+                    >
+                      <BookOpen className="h-3.5 w-3.5" />
+                      <span>Open .env Builder &amp; Handover Manual</span>
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <Label>Group SMTP Host (SMTP_HOST)</Label>
+                    <Input
+                      value={groupDraft.smtpHost ?? 'smtp.gmail.com'}
+                      placeholder="smtp.gmail.com"
+                      onChange={(e) => setGroupDraft({ ...groupDraft, smtpHost: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Group SMTP Port (SMTP_PORT)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={groupDraft.smtpPort ?? 465}
+                      onChange={(e) =>
+                        setGroupDraft({ ...groupDraft, smtpPort: Number(e.target.value) || 465 })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label>Group Sender Email (SMTP_USER)</Label>
+                    <Input
+                      type="email"
+                      value={groupDraft.smtpUser ?? ''}
+                      placeholder="noreply@yourgroup.co.za"
+                      onChange={(e) => setGroupDraft({ ...groupDraft, smtpUser: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label>Group Display From (SMTP_FROM)</Label>
+                    <Input
+                      value={groupDraft.smtpFrom ?? ''}
+                      placeholder="Your VW Group <noreply@yourgroup.co.za>"
+                      onChange={(e) => setGroupDraft({ ...groupDraft, smtpFrom: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#CBD5E1] bg-white px-4 py-3 text-xs">
+                  <div className="flex flex-wrap items-center gap-4">
+                    <label className="inline-flex items-center gap-2 font-medium text-[#091224] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={groupDraft.licenceScannerEnabled ?? true}
+                        onChange={(e) =>
+                          setGroupDraft({
+                            ...groupDraft,
+                            licenceScannerEnabled: e.target.checked,
+                          })
+                        }
+                      />
+                      <span>Enable AI Licence Disc Scanner (<code>GEMINI_API_KEY</code>)</span>
+                    </label>
+                    <label className="inline-flex items-center gap-2 font-medium text-[#091224] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={groupDraft.autotraderSyncDefault ?? true}
+                        onChange={(e) =>
+                          setGroupDraft({
+                            ...groupDraft,
+                            autotraderSyncDefault: e.target.checked,
+                          })
+                        }
+                      />
+                      <span>Enable AutoTrader Scraper (<code>DECODO_API_KEY</code>)</span>
+                    </label>
+                  </div>
+
+                  {systemStatus && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
+                          systemStatus.apis.gemini.configured
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-900'
+                        )}
+                      >
+                        {systemStatus.apis.gemini.configured ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : (
+                          <AlertTriangle className="h-3 w-3" />
+                        )}
+                        GEMINI_API_KEY
+                      </span>
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
+                          systemStatus.apis.globalSmtp.configured
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-900'
+                        )}
+                      >
+                        {systemStatus.apis.globalSmtp.configured ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : (
+                          <AlertTriangle className="h-3 w-3" />
+                        )}
+                        SMTP_PASS
+                      </span>
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold',
+                          systemStatus.apis.decodo.configured
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-100 text-slate-700'
+                        )}
+                      >
+                        DECODO_API_KEY: {systemStatus.apis.decodo.configured ? 'Connected' : 'Optional'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -3795,7 +4539,7 @@ export function AdminPortalPage() {
                     </p>
                   </div>
 
-                  {allDealerships.length > 1 && (
+                  {allDealerships.length > 1 && isAdmin && (
                     <div className="flex flex-wrap items-center gap-2">
                       {selectedBranchDeps.totalCount > 0 ? (
                         <Button
@@ -3941,7 +4685,7 @@ export function AdminPortalPage() {
         )}
 
         {/* NEWS TAB */}
-        {(isAdmin || isMarketing) && activeTab === 'news' && (
+        {canViewNews && activeTab === 'news' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-display text-lg font-semibold text-[#091224]">
@@ -4019,24 +4763,30 @@ export function AdminPortalPage() {
         )}
 
         {/* LEADS TAB */}
-        {(isAdmin || isPartsExec || isServiceClerk) && activeTab === 'leads' && (
+        {canViewLeads && activeTab === 'leads' && (
           <div className="space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="font-display text-lg font-semibold text-[#091224]">
-                  {isPartsExec
+                  {isAdmin || isItManager
+                    ? 'Customer Leads & Booking Inbox'
+                    : isBranchAdmin
+                    ? `${allocatedBranch?.shortName ?? 'Branch'} Customer Leads & Booking Inbox`
+                    : isPartsExec
                     ? `${allocatedBranch?.shortName ?? 'Branch'} Parts Requests Inbox`
                     : isServiceClerk
                     ? `${allocatedBranch?.shortName ?? 'Branch'} Service Bookings Inbox`
-                    : 'Customer Leads & Booking Inbox'}
+                    : `${allocatedBranch?.shortName ?? 'Branch'} Spotter Leads Inbox`}
                 </h2>
                 {!isAdmin && (
                   <p className="text-xs text-[#475569]">
-                    Update customer follow-up statuses below. Deleting lead records is restricted to Group Administrators.
+                    {isSalesAgent && !isBranchAdmin && !isItManager
+                      ? 'Spotter referral leads routed to your dealership sales desk. Update follow-up statuses below.'
+                      : 'Update customer follow-up statuses below. Deleting lead records is restricted to Group Administrators.'}
                   </p>
                 )}
               </div>
-              {isAdmin && (
+              {(isAdmin || isItManager) && (
                 <Select
                   value={leadBranchFilter}
                   onChange={(e) => setLeadBranchFilter(e.target.value as 'All' | DealershipId)}
@@ -4052,9 +4802,51 @@ export function AdminPortalPage() {
               )}
             </div>
 
+            {canFilterLeadSections && (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E2E8F0] bg-white p-2">
+                {(
+                  [
+                    { id: 'all', label: 'All Requests', count: leadSectionCounts.all },
+                    { id: 'parts', label: 'Parts Only', count: leadSectionCounts.parts },
+                    { id: 'service', label: 'Service Bookings', count: leadSectionCounts.service },
+                    { id: 'spotters', label: 'Spotters', count: leadSectionCounts.spotters },
+                    {
+                      id: 'sales-other',
+                      label: 'Sales & Other',
+                      count: leadSectionCounts['sales-other'],
+                    },
+                  ] as const
+                ).map((sec) => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => setLeadSectionFilter(sec.id)}
+                    className={cn(
+                      'inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0',
+                      leadSectionFilter === sec.id
+                        ? 'bg-[#001E50] text-white'
+                        : 'text-[#475569] hover:bg-[#F8FAFC] hover:text-[#091224]'
+                    )}
+                  >
+                    <span>{sec.label}</span>
+                    <span
+                      className={cn(
+                        'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tabular-nums',
+                        leadSectionFilter === sec.id
+                          ? 'bg-white/20 text-white'
+                          : 'bg-[#F1F5F9] text-[#334155]'
+                      )}
+                    >
+                      {sec.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {sortedLeads.length === 0 ? (
               <div className="rounded-xl border border-[#E2E8F0] bg-white p-12 text-center text-sm text-[#475569]">
-                No customer requests match your filter. Submissions across {groupProfile.groupName} branches appear here in real time.
+                No customer requests match your current section or search filter. Submissions appear here in real time.
               </div>
             ) : (
               <div className="space-y-4">
@@ -4072,8 +4864,15 @@ export function AdminPortalPage() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded bg-[#001E50]/10 px-2 py-0.5 font-mono text-[11px] font-semibold uppercase text-[#001E50]">
-                              {lead.leadType}
+                            <span
+                              className={cn(
+                                'rounded px-2 py-0.5 font-mono text-[11px] font-semibold uppercase',
+                                isSpotterLead(lead)
+                                  ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                                  : 'bg-[#001E50]/10 text-[#001E50]'
+                              )}
+                            >
+                              {formatLeadTypeBadge(lead)}
                             </span>
                             <span className="rounded bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-[#00437A]">
                               From Site: {submittedBranch?.shortName ?? `ID ${lead.submittedAtDealershipId}`}
@@ -4146,7 +4945,591 @@ export function AdminPortalPage() {
             )}
           </div>
         )}
+
+        {/* CAREERS & APPLICATIONS TAB (GROUP ADMIN, IT MANAGER & BRANCH ADMIN) */}
+        {canViewCareers && activeTab === 'careers' && (
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="inline-flex rounded-lg border border-[#E2E8F0] bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => setCareerSubTab('jobs')}
+                  className={cn(
+                    'px-3.5 py-1.5 text-xs font-medium rounded-md cursor-pointer whitespace-nowrap shrink-0',
+                    careerSubTab === 'jobs'
+                      ? 'bg-[#001E50] text-white'
+                      : 'text-[#475569] hover:text-[#091224]'
+                  )}
+                >
+                  Job Openings ({allJobs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCareerSubTab('applications')}
+                  className={cn(
+                    'px-3.5 py-1.5 text-xs font-medium rounded-md cursor-pointer whitespace-nowrap shrink-0',
+                    careerSubTab === 'applications'
+                      ? 'bg-[#001E50] text-white'
+                      : 'text-[#475569] hover:text-[#091224]'
+                  )}
+                >
+                  Received Applications ({scopedJobApplications.length})
+                </button>
+              </div>
+
+              {careerSubTab === 'jobs' ? (
+                (isAdmin || isItManager) ? (
+                  <Button
+                    onClick={() =>
+                      setEditingJob({
+                        id: `job-${Date.now()}`,
+                        title: '',
+                        department: 'Vehicle Sales',
+                        dealershipId: activeDealership.id,
+                        locationLabel: `${activeDealership.city}, ${activeDealership.province}`,
+                        employmentType: 'Full-Time',
+                        summary: '',
+                        requirements: '',
+                        responsibilities: '',
+                        applicationMode: 'internal',
+                        externalApplyUrl: '',
+                        requiresLicence: true,
+                        licenceDescription: "Valid Code 8 (B) Driver's Licence",
+                        closingDate: addDaysISO(todayISO, 45),
+                        active: true,
+                      })
+                    }
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span>Post New Job Opening</span>
+                  </Button>
+                ) : (
+                  <span className="text-xs text-[#64748B]">
+                    Job openings are published group-wide by Group Admin / IT Manager.
+                  </span>
+                )
+              ) : (
+                <Select
+                  aria-label="Filter applications by job opening"
+                  value={applicationJobFilter}
+                  onChange={(e) => setApplicationJobFilter(e.target.value)}
+                  className="w-64 bg-white"
+                >
+                  <option value="All">All Positions ({scopedJobApplications.length})</option>
+                  {allJobs.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.title}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
+
+            {careerSubTab === 'jobs' ? (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {allJobs.map((job) => {
+                  const branchName =
+                    job.dealershipId === null
+                      ? `${groupProfile.groupName} Group`
+                      : dealershipsById[job.dealershipId]?.name ?? job.locationLabel;
+                  return (
+                    <div
+                      key={job.id}
+                      className="rounded-xl border border-[#E2E8F0] bg-white p-5 space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-mono text-[11px] font-semibold text-[#00437A]">
+                            {job.department} · {job.employmentType} · Closes {job.closingDate}
+                          </p>
+                          <h3 className="mt-1 font-display text-lg font-semibold text-[#091224]">
+                            {job.title}
+                          </h3>
+                          <p className="text-xs text-[#64748B]">
+                            {branchName} · {job.locationLabel}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span
+                            className={cn(
+                              'rounded px-2 py-0.5 text-[11px] font-semibold',
+                              job.active
+                                ? 'bg-emerald-50 text-emerald-800'
+                                : 'bg-slate-100 text-slate-600'
+                            )}
+                          >
+                            {job.active ? 'Active' : 'Closed'}
+                          </span>
+                          {(isAdmin || isItManager) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setEditingJob(job)}
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {isAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  await deleteJobOpening(job.id);
+                                  showFlash(`Removed "${job.title}".`);
+                                } catch (err) {
+                                  setActionError(
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Unable to delete job opening.'
+                                  );
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-[#334155] leading-relaxed">{job.summary}</p>
+
+                      <div className="border-t border-[#E2E8F0] pt-3 text-[11px] text-[#475569] space-y-1">
+                        <p>
+                          <strong>Application Source:</strong>{' '}
+                          {job.applicationMode === 'external'
+                            ? `External URL (${job.externalApplyUrl})`
+                            : 'On-Site Application Form (with CV, Qualifications, ID & Licence uploads)'}
+                        </p>
+                        {job.applicationMode === 'internal' && (
+                          <p>
+                            <strong>Licence Requirement:</strong>{' '}
+                            {job.requiresLicence
+                              ? `Required — ${job.licenceDescription || "Driver's / Trade Licence"}`
+                              : 'Optional'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              (() => {
+                const visibleApps = scopedJobApplications.filter((app) =>
+                  applicationJobFilter === 'All' ? true : app.jobId === applicationJobFilter
+                );
+                if (visibleApps.length === 0) {
+                  return (
+                    <div className="rounded-xl border border-[#E2E8F0] bg-white p-12 text-center text-sm text-[#475569]">
+                      No candidate applications match your current filter yet.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-4">
+                    {visibleApps.map((app) => {
+                      const appDocs = [
+                        { key: 'cv', label: 'CV / Resume', doc: app.resumeDoc },
+                        { key: 'qual', label: 'Qualifications', doc: app.qualificationDoc },
+                        { key: 'id', label: 'Copy of ID', doc: app.idCopyDoc },
+                        ...(app.licenceDoc
+                          ? [{ key: 'lic', label: 'Licence', doc: app.licenceDoc }]
+                          : []),
+                      ];
+
+                      return (
+                        <div
+                          key={app.id}
+                          className="rounded-xl border border-[#E2E8F0] bg-white p-5 space-y-4"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                              <p className="font-mono text-[11px] font-semibold text-[#00437A]">
+                                {app.jobTitle} · Ref: {app.id}
+                              </p>
+                              <h3 className="mt-1 font-display text-lg font-semibold text-[#091224]">
+                                {app.fullName}
+                              </h3>
+                              <p className="text-xs text-[#64748B]">
+                                {app.cityOrSuburb} · {app.yearsExperience} yrs experience · Highest
+                                Qual: {app.highestQualification}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Select
+                                aria-label="Application status"
+                                value={app.status}
+                                onChange={(e) => {
+                                  const nextStatus = e.target.value as JobApplicationStatus;
+                                  setPendingStatusEmail({
+                                    application: app,
+                                    targetStatus: nextStatus,
+                                  });
+                                }}
+                                className="w-40"
+                              >
+                                <option value="new">New</option>
+                                <option value="shortlisted">Shortlisted</option>
+                                <option value="interview">Interview</option>
+                                <option value="rejected">Rejected</option>
+                                <option value="archived">Archived</option>
+                              </Select>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                title="Open email draft & status update window"
+                                onClick={() =>
+                                  setPendingStatusEmail({
+                                    application: app,
+                                    targetStatus: app.status,
+                                  })
+                                }
+                              >
+                                <Mail className="h-3.5 w-3.5 text-[#00437A]" />
+                                <span>Draft Update</span>
+                              </Button>
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void deleteJobApplication(app.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-2 text-xs text-[#334155] sm:grid-cols-2 lg:grid-cols-4">
+                            <p>
+                              <strong className="text-[#091224]">Email:</strong> {app.email}
+                            </p>
+                            <p>
+                              <strong className="text-[#091224]">Phone:</strong>{' '}
+                              <span className="font-mono">{app.phone}</span>
+                            </p>
+                            <p>
+                              <strong className="text-[#091224]">ID / Passport:</strong>{' '}
+                              <span className="font-mono">{app.idNumber}</span>
+                            </p>
+                            <p>
+                              <strong className="text-[#091224]">Licence:</strong>{' '}
+                              {app.driversLicenceCode || 'None specified'}
+                            </p>
+                          </div>
+
+                          {app.coverNote && (
+                            <p className="rounded-lg bg-[#F8FAFC] p-3 text-xs text-[#475569] whitespace-pre-wrap">
+                              {app.coverNote}
+                            </p>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-2 border-t border-[#E2E8F0] pt-3">
+                            <span className="text-xs font-semibold text-[#091224] mr-1 inline-flex items-center gap-1">
+                              <FileText className="h-3.5 w-3.5 text-[#00437A]" />
+                              Documents:
+                            </span>
+                            {appDocs.map((entry) => {
+                              const dlKey = `${app.id}:${entry.key}`;
+                              return (
+                                <div
+                                  key={dlKey}
+                                  className="inline-flex items-center rounded-lg border border-[#CBD5E1] bg-[#F8FAFC] p-0.5"
+                                >
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2.5 text-xs font-semibold text-[#001E50]"
+                                    onClick={() =>
+                                      setViewingCareerDoc({
+                                        url: entry.doc.url,
+                                        fileName: entry.doc.fileName,
+                                        mimeType: entry.doc.mimeType,
+                                        docLabel: entry.label,
+                                        applicantName: app.fullName,
+                                      })
+                                    }
+                                  >
+                                    <Eye className="h-3.5 w-3.5 text-[#00437A]" />
+                                    <span>View {entry.label}</span>
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    title={`Download ${entry.doc.fileName}`}
+                                    aria-label={`Download ${entry.label}`}
+                                    className="h-7 px-2 text-[#475569] hover:text-[#091224]"
+                                    disabled={downloadingDocKey === dlKey}
+                                    onClick={async () => {
+                                      setDownloadingDocKey(dlKey);
+                                      try {
+                                        await downloadProtectedCareerDoc(
+                                          entry.doc.url,
+                                          entry.doc.fileName,
+                                          user
+                                        );
+                                      } catch (err) {
+                                        setActionError(
+                                          err instanceof Error
+                                            ? err.message
+                                            : 'Unable to download applicant document.'
+                                        );
+                                      } finally {
+                                        setDownloadingDocKey(null);
+                                      }
+                                    }}
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()
+            )}
+          </div>
+        )}
+
+        {/* IT ESCALATION TICKETS TAB */}
+        {canViewItTickets && activeTab === 'it-tickets' && <ItEscalationCenter />}
       </div>
+
+      {/* JOB OPENING ADD / EDIT MODAL */}
+      {editingJob && (
+        <Dialog
+          open
+          onClose={() => setEditingJob(null)}
+          title="Save Career Job Opening"
+          subtitle="Choose Direct On-Site Application (requires CV, Qualifications, ID & optional/required Licence) or External Portal Redirect."
+          maxWidthClass="max-w-2xl"
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                await saveJobOpening(editingJob);
+                setEditingJob(null);
+                showFlash(`Saved career opportunity "${editingJob.title}".`);
+              } catch (err) {
+                setActionError(
+                  err instanceof Error ? err.message : 'Unable to save job opening.'
+                );
+              }
+            }}
+            className="space-y-4"
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Job Title *</Label>
+                <Input
+                  value={editingJob.title}
+                  placeholder="e.g. New & MasterCars Sales Executive"
+                  onChange={(e) => setEditingJob({ ...editingJob, title: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Department *</Label>
+                <Input
+                  value={editingJob.department}
+                  placeholder="e.g. Vehicle Sales, Aftersales, Parts, Finance"
+                  onChange={(e) => setEditingJob({ ...editingJob, department: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div>
+                <Label>Dealership / Scope *</Label>
+                <Select
+                  value={editingJob.dealershipId ?? 'MASTER'}
+                  onChange={(e) =>
+                    setEditingJob({
+                      ...editingJob,
+                      dealershipId:
+                        e.target.value === 'MASTER' ? null : (e.target.value as DealershipId),
+                    })
+                  }
+                >
+                  <option value="MASTER">Group-Wide (All Branches)</option>
+                  {allDealerships.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} (ID {b.id})
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Label>Employment Type *</Label>
+                <Select
+                  value={editingJob.employmentType}
+                  onChange={(e) =>
+                    setEditingJob({
+                      ...editingJob,
+                      employmentType: e.target.value as JobEmploymentType,
+                    })
+                  }
+                >
+                  <option value="Full-Time">Full-Time</option>
+                  <option value="Part-Time">Part-Time</option>
+                  <option value="Fixed-Term">Fixed-Term</option>
+                  <option value="Apprenticeship">Apprenticeship</option>
+                </Select>
+              </div>
+              <div>
+                <Label>Closing Date *</Label>
+                <Input
+                  type="date"
+                  value={editingJob.closingDate}
+                  onChange={(e) => setEditingJob({ ...editingJob, closingDate: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Location Display *</Label>
+                <Input
+                  value={editingJob.locationLabel}
+                  placeholder="e.g. Newcastle, KwaZulu-Natal"
+                  onChange={(e) =>
+                    setEditingJob({ ...editingJob, locationLabel: e.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Listing Status *</Label>
+                <Select
+                  value={editingJob.active ? 'active' : 'closed'}
+                  onChange={(e) =>
+                    setEditingJob({ ...editingJob, active: e.target.value === 'active' })
+                  }
+                >
+                  <option value="active">Active (Visible on Careers Page)</option>
+                  <option value="closed">Closed / Hidden</option>
+                </Select>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-4 space-y-3">
+              <div>
+                <Label>Application Workflow *</Label>
+                <Select
+                  value={editingJob.applicationMode}
+                  onChange={(e) =>
+                    setEditingJob({
+                      ...editingJob,
+                      applicationMode: e.target.value as JobApplicationMode,
+                    })
+                  }
+                >
+                  <option value="internal">
+                    Direct On-Site Application (Uploads CV, Qualifications, ID &amp; Licence here)
+                  </option>
+                  <option value="external">
+                    External Source Link (Redirect Applicant to External URL)
+                  </option>
+                </Select>
+              </div>
+
+              {editingJob.applicationMode === 'external' ? (
+                <div>
+                  <Label>External Application URL (https://...) *</Label>
+                  <Input
+                    type="url"
+                    value={editingJob.externalApplyUrl ?? ''}
+                    placeholder="https://www.vw.co.za/en/about-volkswagen/careers.html"
+                    onChange={(e) =>
+                      setEditingJob({ ...editingJob, externalApplyUrl: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <label className="flex items-center gap-2.5 text-xs font-medium text-[#091224] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editingJob.requiresLicence}
+                      onChange={(e) =>
+                        setEditingJob({ ...editingJob, requiresLicence: e.target.checked })
+                      }
+                      className="h-4 w-4 rounded accent-[#001E50]"
+                    />
+                    <span>
+                      Require Applicant to Upload a Driver&apos;s Licence or Occupational Licence
+                    </span>
+                  </label>
+                  {editingJob.requiresLicence && (
+                    <div>
+                      <Label>Required Licence Description</Label>
+                      <Input
+                        value={editingJob.licenceDescription ?? ''}
+                        placeholder="e.g. Valid Code 8 (B) Driver's Licence / Red Seal Trade Licence"
+                        onChange={(e) =>
+                          setEditingJob({ ...editingJob, licenceDescription: e.target.value })
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <Label>Role Summary *</Label>
+              <Textarea
+                rows={2}
+                value={editingJob.summary}
+                onChange={(e) => setEditingJob({ ...editingJob, summary: e.target.value })}
+                required
+              />
+            </div>
+
+            <div>
+              <Label>Requirements &amp; Qualifications *</Label>
+              <Textarea
+                rows={2}
+                value={editingJob.requirements}
+                onChange={(e) => setEditingJob({ ...editingJob, requirements: e.target.value })}
+                required
+              />
+            </div>
+
+            <div>
+              <Label>Key Responsibilities (Optional)</Label>
+              <Textarea
+                rows={2}
+                value={editingJob.responsibilities ?? ''}
+                onChange={(e) =>
+                  setEditingJob({ ...editingJob, responsibilities: e.target.value })
+                }
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 border-t border-[#E2E8F0] pt-4">
+              <Button type="button" variant="ghost" onClick={() => setEditingJob(null)}>
+                Cancel
+              </Button>
+              <Button type="submit">Save Job Opening</Button>
+            </div>
+          </form>
+        </Dialog>
+      )}
 
       {/* VEHICLE ADD/EDIT MODAL */}
       {editingVehicle && (
@@ -4210,7 +5593,7 @@ export function AdminPortalPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <Label>Holding Dealership *</Label>
-                {isSalesAgent ? (
+                {(isSalesAgent || isBranchAdmin) && !isAdmin && !isItManager ? (
                   <Input
                     value={`${allocatedBranch?.name ?? 'Assigned Branch'} (ID ${allocatedBranchId})`}
                     disabled
@@ -4235,7 +5618,7 @@ export function AdminPortalPage() {
                 )}
               </div>
               <div>
-                <Label>Category *</Label>
+                <Label>Condition / Category *</Label>
                 <Select
                   value={editingVehicle.category}
                   onChange={(e) =>
@@ -4246,6 +5629,7 @@ export function AdminPortalPage() {
                   }
                 >
                   <option value="New">New</option>
+                  <option value="Demo">Demo</option>
                   <option value="MasterCars">MasterCars</option>
                   <option value="Used">Used</option>
                 </Select>
@@ -4352,13 +5736,25 @@ export function AdminPortalPage() {
               </div>
               <div>
                 <Label>Fuel Type *</Label>
-                <Input
+                <Select
                   value={editingVehicle.fuelType}
                   onChange={(e) =>
                     setEditingVehicle({ ...editingVehicle, fuelType: e.target.value })
                   }
-                  required
-                />
+                >
+                  <option value="Petrol">Petrol</option>
+                  <option value="Diesel">Diesel</option>
+                  <option value="Hybrid">Hybrid</option>
+                  <option value="Plug-in Hybrid">Plug-in Hybrid</option>
+                  <option value="Electric">Electric</option>
+                  {!['Petrol', 'Diesel', 'Hybrid', 'Plug-in Hybrid', 'Electric'].includes(
+                    editingVehicle.fuelType
+                  ) && (
+                    <option value={editingVehicle.fuelType}>
+                      {editingVehicle.fuelType}
+                    </option>
+                  )}
+                </Select>
               </div>
             </div>
 
@@ -4441,7 +5837,7 @@ export function AdminPortalPage() {
             onSubmit={async (e) => {
               e.preventDefault();
               try {
-                const isBranchLimited = isSalesAgent || isPartsExec || isServiceClerk;
+                const isBranchLimited = !(isAdmin || isItManager || isMarketing);
                 const scope: PromotionScope =
                   isBranchLimited || editingPromo.visibilityChoice !== 'MASTER'
                     ? 'BRANCH'
@@ -4498,7 +5894,7 @@ export function AdminPortalPage() {
                   >
                     <option value="special">Monthly Special</option>
                     <option value="event">Dealership Event</option>
-                    {(isAdmin || isMarketing) && (
+                    {(isAdmin || isItManager || isMarketing || isBranchAdmin) && (
                       <option value="competition">Competition / Prize Draw</option>
                     )}
                   </Select>
@@ -4510,7 +5906,7 @@ export function AdminPortalPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <Label>Visibility Scope *</Label>
-                {isSalesAgent || isPartsExec || isServiceClerk ? (
+                {!(isAdmin || isItManager || isMarketing) ? (
                   <Input
                     value={`${allocatedBranch?.name ?? 'Assigned Branch'} Only (ID ${allocatedBranchId})`}
                     disabled
@@ -4913,8 +6309,8 @@ export function AdminPortalPage() {
         </Dialog>
       )}
 
-      {/* ADD STAFF USER MODAL (ADMIN ONLY) */}
-      {isAdmin && showCreateStaffModal && (
+      {/* ADD STAFF USER MODAL (GROUP ADMIN & IT MANAGER) */}
+      {(isAdmin || isItManager) && showCreateStaffModal && (
         <Dialog
           open
           onClose={() => {
@@ -4926,7 +6322,7 @@ export function AdminPortalPage() {
           subtitle={
             createdStaffReceipt
               ? 'Share these temporary sign-in credentials securely. The user will be prompted to create a personal password on first sign-in.'
-              : 'Create a staff account across any of the 5 dealership roles with a temporary random password.'
+              : 'Create a staff account across dealership or group roles with a temporary random password.'
           }
           maxWidthClass="max-w-xl"
         >
@@ -5150,19 +6546,13 @@ export function AdminPortalPage() {
                       }
                     }}
                   >
-                    <option value="agent">
-                      Car Sales Agent (Branch Cars, Specials &amp; Events)
-                    </option>
-                    <option value="marketing">
-                      Marketing Coordinator (Group-Wide News &amp; Campaigns)
-                    </option>
-                    <option value="parts">
-                      Parts Sales Executive (Branch Parts Leads &amp; Specials)
-                    </option>
-                    <option value="service">
-                      Service Booking Clerk (Branch Service Bookings &amp; Specials)
-                    </option>
-                    <option value="admin">Administrator (Full Group Access)</option>
+                    {(Object.keys(STAFF_ROLE_META) as StaffRole[])
+                      .filter((r) => isAdmin || (r !== 'admin' && r !== 'it_manager'))
+                      .map((roleKey) => (
+                        <option key={roleKey} value={roleKey}>
+                          {STAFF_ROLE_META[roleKey].label} ({STAFF_ROLE_META[roleKey].scopeSummary})
+                        </option>
+                      ))}
                   </Select>
                 </div>
                 <div>
@@ -5242,8 +6632,8 @@ export function AdminPortalPage() {
         </Dialog>
       )}
 
-      {/* EDIT STAFF USER MODAL (ADMIN ONLY) */}
-      {isAdmin && editingStaffUser && (
+      {/* EDIT STAFF USER MODAL (GROUP ADMIN & IT MANAGER) */}
+      {(isAdmin || isItManager) && editingStaffUser && (
         <Dialog
           open
           onClose={() => {
@@ -5328,11 +6718,13 @@ export function AdminPortalPage() {
                     });
                   }}
                 >
-                  <option value="agent">Car Sales Agent</option>
-                  <option value="marketing">Marketing Coordinator</option>
-                  <option value="parts">Parts Sales Executive</option>
-                  <option value="service">Service Booking Clerk</option>
-                  <option value="admin">Administrator</option>
+                  {(Object.keys(STAFF_ROLE_META) as StaffRole[])
+                    .filter((r) => isAdmin || (r !== 'admin' && r !== 'it_manager'))
+                    .map((roleKey) => (
+                      <option key={roleKey} value={roleKey}>
+                        {STAFF_ROLE_META[roleKey].label}
+                      </option>
+                    ))}
                 </Select>
               </div>
               <div>
@@ -5391,8 +6783,8 @@ export function AdminPortalPage() {
         </Dialog>
       )}
 
-      {/* ADD NEW DEALERSHIP BRANCH MODAL (ADMIN ONLY) */}
-      {isAdmin && showAddBranchModal && newBranchDraft && (
+      {/* ADD NEW DEALERSHIP BRANCH MODAL (GROUP ADMIN & IT MANAGER) */}
+      {(isAdmin || isItManager) && showAddBranchModal && newBranchDraft && (
         <Dialog
           open
           onClose={() => {
@@ -5401,8 +6793,8 @@ export function AdminPortalPage() {
             setAddBranchError(null);
           }}
           title="Register New Dealership Branch"
-          subtitle="Add another Volkswagen dealership branch to your group directory with its own domain, contact info, social channels, and booking prefix."
-          maxWidthClass="max-w-2xl"
+          subtitle="Register a dealership branch with its domain, legal/FSP identity, hours, department email routing, Nodemailer SMTP server, and AutoTrader/API integrations."
+          maxWidthClass="max-w-3xl"
         >
           <form
             onSubmit={async (e) => {
@@ -5594,6 +6986,62 @@ export function AdminPortalPage() {
                 }
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div>
+                <Label>Legal Entity *</Label>
+                <Input
+                  value={newBranchDraft.legalEntity}
+                  onChange={(e) =>
+                    setNewBranchDraft({ ...newBranchDraft, legalEntity: e.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Authorised FSP Number *</Label>
+                <Input
+                  value={newBranchDraft.fspNumber}
+                  onChange={(e) =>
+                    setNewBranchDraft({ ...newBranchDraft, fspNumber: e.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Postal Address (Optional)</Label>
+                <Input
+                  value={newBranchDraft.postalAddress}
+                  placeholder="P.O. Box 123, Ladysmith, 3370"
+                  onChange={(e) =>
+                    setNewBranchDraft({ ...newBranchDraft, postalAddress: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <Label>Sales Trading Hours *</Label>
+                <Input
+                  value={newBranchDraft.salesHours}
+                  onChange={(e) =>
+                    setNewBranchDraft({ ...newBranchDraft, salesHours: e.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <Label>Service &amp; Parts Trading Hours *</Label>
+                <Input
+                  value={newBranchDraft.serviceHours}
+                  onChange={(e) =>
+                    setNewBranchDraft({ ...newBranchDraft, serviceHours: e.target.value })
+                  }
+                  required
+                />
+              </div>
             </div>
 
             <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
@@ -5849,7 +7297,7 @@ export function AdminPortalPage() {
                   <code className="rounded bg-[#F1F5F9] px-1 py-0.5 font-semibold text-[#001E50]">
                     {newBranchDraft.smtpPassEnvKey || `SMTP_PASS_BRANCH_${newBranchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`}
                   </code>{' '}
-                  in <strong>Settings &rarr; Secrets</strong> or <code>.env</code> so passwords stay off the public database.
+                  in Vercel Env / AI Studio <strong>Settings &rarr; Secrets</strong> / <code>.env</code> so passwords stay off the public database.
                 </span>
                 <Button
                   type="button"
@@ -5882,7 +7330,87 @@ export function AdminPortalPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/* AutoTrader & Platform APIs Checklist for New Branch */}
+            <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-display text-xs font-semibold uppercase tracking-wider text-[#091224]">
+                    AutoTrader Stock Sync &amp; Hosting / API Readiness
+                  </h4>
+                  <p className="text-[11px] text-[#64748B]">
+                    Optional AutoTrader Dealer URL (uses <code>DECODO_API_KEY</code> when enabled) plus Firebase/Vercel domain reminder.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="inline-flex items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1 text-xs font-medium text-[#091224] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(newBranchDraft.syncEnabled)}
+                      onChange={(e) =>
+                        setNewBranchDraft({ ...newBranchDraft, syncEnabled: e.target.checked })
+                      }
+                    />
+                    <span>Enable AutoTrader Sync</span>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setHandoverManualTab('acquire-apis');
+                      setShowHandoverManual(true);
+                    }}
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    <span>API &amp; Vercel Manual</span>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <Label>AutoTrader Dealer ID (Optional)</Label>
+                  <Input
+                    value={newBranchDraft.autotraderDealerId ?? ''}
+                    placeholder="e.g. 168682"
+                    onChange={(e) =>
+                      setNewBranchDraft({
+                        ...newBranchDraft,
+                        autotraderDealerId: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>AutoTrader Showroom URL (Optional)</Label>
+                  <Input
+                    type="url"
+                    value={newBranchDraft.autotraderUrl ?? ''}
+                    placeholder="https://www.autotrader.co.za/dealer/..."
+                    onChange={(e) =>
+                      setNewBranchDraft({
+                        ...newBranchDraft,
+                        autotraderUrl: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-[11px] text-[#475569] space-y-1">
+                <p>
+                  <strong>Checklist after creating this branch:</strong>
+                </p>
+                <p>
+                  1. Add <code>{newBranchDraft.domain || 'www.yourbranch.co.za'}</code> (and your <code>*.vercel.app</code> test URL) to <strong>Firebase Console &rarr; Authentication &rarr; Settings &rarr; Authorized domains</strong>.
+                </p>
+                <p>
+                  2. Ensure server environment variables include <code>GEMINI_API_KEY</code> (Licence Disc OCR) and <code>{newBranchDraft.smtpPassEnvKey || `SMTP_PASS_BRANCH_${newBranchDraft.id.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`}</code> (Branch Emails).
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
                 <Label>Facebook Page URL (Optional)</Label>
                 <Input
@@ -5902,6 +7430,17 @@ export function AdminPortalPage() {
                   placeholder="https://www.instagram.com/..."
                   onChange={(e) =>
                     setNewBranchDraft({ ...newBranchDraft, instagramUrl: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label>YouTube URL (Optional)</Label>
+                <Input
+                  type="url"
+                  value={newBranchDraft.youtubeUrl ?? ''}
+                  placeholder="https://www.youtube.com/@..."
+                  onChange={(e) =>
+                    setNewBranchDraft({ ...newBranchDraft, youtubeUrl: e.target.value })
                   }
                 />
               </div>
@@ -5998,6 +7537,42 @@ export function AdminPortalPage() {
                 }
               }
         }
+      />
+
+      <SystemHandoverManualModal
+        open={showHandoverManual}
+        initialTab={handoverManualTab}
+        onClose={() => setShowHandoverManual(false)}
+        groupProfile={groupDraft}
+        branches={allDealerships}
+        systemStatus={systemStatus}
+        loadingStatus={loadingSystemStatus}
+        onRefreshStatus={() => void fetchSystemStatus()}
+        onUpdateGroupDraft={(patch) => setGroupDraft((prev) => ({ ...prev, ...patch }))}
+      />
+
+      {/* In-Browser Applicant Document Preview Modal (No Download Required) */}
+      <CareerDocumentViewerModal
+        open={Boolean(viewingCareerDoc)}
+        target={viewingCareerDoc}
+        user={user}
+        onClose={() => setViewingCareerDoc(null)}
+        onError={(msg) => setActionError(msg)}
+      />
+
+      {/* Candidate Status Update & Branch Careers Email Draft Modal */}
+      <CandidateStatusEmailModal
+        open={Boolean(pendingStatusEmail)}
+        application={pendingStatusEmail?.application ?? null}
+        initialStatus={pendingStatusEmail?.targetStatus ?? 'new'}
+        groupName={groupProfile.groupName}
+        defaultBranchId={groupProfile.defaultBranchId || '1'}
+        dealershipsById={dealershipsById}
+        user={user}
+        onConfirmStatus={updateJobApplicationStatus}
+        onClose={() => setPendingStatusEmail(null)}
+        onSuccessFlash={(msg) => showFlash(msg)}
+        onError={(msg) => setActionError(msg)}
       />
     </div>
   );

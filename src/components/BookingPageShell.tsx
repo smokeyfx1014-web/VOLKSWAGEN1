@@ -8,8 +8,13 @@ import {
   STARTING_POINT_ASSETS,
   WEEKDAY_TEST_DRIVE_SLOTS,
 } from '../data/dealership';
+import {
+  buildCustomerAgentSummary,
+  LicenceDiscScanResult,
+} from '../lib/licenceDiscScanner';
 import { cn, generateBookingRef } from '../lib/utils';
 import { DealershipImage } from './DealershipImage';
+import { LicenceDiscUploader } from './LicenceDiscUploader';
 import { SectionHeader } from './MotionPrimitives';
 import { Button, Input, Label, Select, Textarea } from './ui/shadcn';
 
@@ -73,8 +78,10 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
   const [preferredTime, setPreferredTime] = useState('09:00');
   const [vehicleReg, setVehicleReg] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [engineNumber, setEngineNumber] = useState('');
   const [mileageKm, setMileageKm] = useState('');
   const [notes, setNotes] = useState('');
+  const [scannedDisc, setScannedDisc] = useState<LicenceDiscScanResult | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
   const [errorSummary, setErrorSummary] = useState('');
   const [submittedRef, setSubmittedRef] = useState<string | null>(null);
@@ -192,6 +199,26 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
     const aftersalesTitle =
       typedVagLabel || (vinNumber.trim() ? `VIN ${vinNumber.trim()}` : 'VAG Group Vehicle');
 
+    const aftersalesDetails =
+      mode === 'service' || mode === 'parts'
+        ? buildCustomerAgentSummary({
+            requestKind: mode,
+            fullName,
+            phone,
+            email,
+            branchName: activeDealership.name,
+            vehicleLabel: typedVagLabel,
+            vinNumber,
+            engineNumber,
+            vehicleReg,
+            serviceType,
+            mileageKm,
+            preferredDate,
+            notes,
+            scannedDisc,
+          })
+        : `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`;
+
     void submitLead({
       id: ref.toLowerCase(),
       leadType: mode,
@@ -204,12 +231,7 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
           : mode === 'service'
           ? `${serviceType} — ${aftersalesTitle}`
           : `Genuine VAG Parts — ${aftersalesTitle}`,
-      details:
-        mode === 'test-drive'
-          ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
-          : mode === 'service'
-          ? `Vehicle: ${typedVagLabel || 'Identified by VIN'} | Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
-          : `Vehicle: ${typedVagLabel || 'Identified by VIN'} | VIN: ${vinNumber || 'Not provided'} | Reg: ${vehicleReg || 'Not provided'} | Part Required: ${notes}`,
+      details: aftersalesDetails,
       homeDealershipId:
         mode === 'test-drive'
           ? matchedVehicle?.homeDealershipId ?? activeDealership.id
@@ -320,6 +342,12 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                       <>
                         {vehicleReg.trim() && <p>Registration: {vehicleReg}</p>}
                         {vinNumber.trim() && <p>VIN: {vinNumber}</p>}
+                        {engineNumber.trim() && <p>Engine Code / No.: {engineNumber}</p>}
+                        {scannedDisc && (
+                          <p className="text-emerald-800">
+                            Licence Disc Verified: {scannedDisc.fileName}
+                          </p>
+                        )}
                       </>
                     )}
                     {mode === 'service' && (
@@ -445,6 +473,36 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
 
                   {(mode === 'service' || mode === 'parts') && (
                     <div className="space-y-4">
+                      <LicenceDiscUploader
+                        mode={mode}
+                        scannedDisc={scannedDisc}
+                        onScanComplete={(result) => {
+                          setScannedDisc(result);
+                          const ext = result.extracted;
+                          if (ext.vin) {
+                            setVinNumber(ext.vin);
+                            clearError('vinNumber');
+                          }
+                          if (ext.engineNumber) {
+                            setEngineNumber(ext.engineNumber);
+                          }
+                          if (ext.registrationNumber) {
+                            setVehicleReg(ext.registrationNumber);
+                            clearError('vehicleReg');
+                          }
+                          if (ext.year) {
+                            setVehicleYear(ext.year);
+                            clearError('vehicleYear');
+                          }
+                          const combinedModel = [ext.make, ext.model].filter(Boolean).join(' ').trim();
+                          if (combinedModel) {
+                            setVehicleModel(combinedModel);
+                            clearError('vehicleModel');
+                          }
+                        }}
+                        onClearScan={() => setScannedDisc(null)}
+                      />
+
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                         <div className="sm:col-span-5">
                           <Label htmlFor="page-vin">
@@ -513,6 +571,19 @@ export function DedicatedBookingPage({ mode }: { mode: BookingMode }) {
                             </p>
                           )}
                         </div>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="page-engine-code">
+                          Engine Code / Engine Number (Auto-filled from Licence Disc or Optional)
+                        </Label>
+                        <Input
+                          id="page-engine-code"
+                          value={engineNumber}
+                          placeholder="e.g. CLP123456 or CZPA084210"
+                          className="bg-white font-mono"
+                          onChange={(e) => setEngineNumber(e.target.value.toUpperCase())}
+                        />
                       </div>
 
                       <div

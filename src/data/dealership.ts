@@ -1,5 +1,6 @@
 import {
   AppRoute,
+  CmsJobOpening,
   CmsNewsArticle,
   CmsPromotion,
   CmsVehicle,
@@ -26,6 +27,14 @@ export const DEFAULT_GROUP_PROFILE: DealershipGroupProfile = {
   youtubeUrl: 'https://www.youtube.com/@DocratGroup',
   defaultBranchId: '1',
   defaultNotifyEmail: 'smokeydhlamini@gmail.com',
+  primarySiteUrl: '',
+  smtpHost: 'smtp.gmail.com',
+  smtpPort: 465,
+  smtpUser: 'smokeydhlamini@gmail.com',
+  smtpFrom: 'Docrat Group <smokeydhlamini@gmail.com>',
+  smtpPassEnvKey: 'SMTP_PASS',
+  licenceScannerEnabled: true,
+  autotraderSyncDefault: true,
 };
 
 export const GROUP_CORPORATE_INFO = {
@@ -680,6 +689,24 @@ export const INITIAL_CMS_PROMOTIONS: CmsPromotion[] = [
     updatedBy: 'seed',
   },
   {
+    id: 'promo-master-spotter-reward',
+    title: "Spotter's Commission — Earn R 6,000 Per Successful Vehicle Sale",
+    type: 'competition',
+    description:
+      "Refer a buyer who purchases and takes delivery of any new Volkswagen or certified MasterCar at Newcastle, Ermelo, or Vryheid Volkswagen and receive a R 6,000 spotter's reward. Register your referral lead online before your buyer visits the showroom.",
+    imageUrl: '/assets/aistudio/starting-3_fdca7307.jpg',
+    validUntil: '2026-12-31',
+    scope: 'MASTER',
+    dealershipId: null,
+    active: true,
+    vehicleName: 'Any New VW or MasterCars Vehicle',
+    offerPrice: 6000,
+    monthlyFrom: 0,
+    eventTime: 'R 6,000 Cash Spotter Bonus · T&Cs Apply',
+    location: 'Newcastle · Ermelo · Vryheid',
+    updatedBy: 'seed',
+  },
+  {
     id: 'promo-master-competition',
     title: 'Win a Weekend Getaway with the All-New Tayron 7-Seater',
     type: 'competition',
@@ -731,6 +758,72 @@ export const INITIAL_CMS_NEWS: CmsNewsArticle[] = MOTORING_ARTICLES.map((a) => (
   updatedBy: 'seed',
 }));
 
+export const INITIAL_CMS_JOBS: CmsJobOpening[] = [
+  {
+    id: 'job-sales-exec-newcastle',
+    title: 'New & MasterCars Sales Executive',
+    department: 'Vehicle Sales',
+    dealershipId: '1',
+    locationLabel: 'Newcastle, KwaZulu-Natal',
+    employmentType: 'Full-Time',
+    summary:
+      'Guide retail and fleet clients through new Volkswagen passenger and MasterCars pre-owned purchases from test drive to handover.',
+    requirements:
+      'Minimum 2 years automotive retail sales experience, valid unendorsed Code 8 (B) driver licence, Matric (Grade 12), strong CRM and customer service skills.',
+    responsibilities:
+      'Achieve monthly retail unit targets, conduct structured demonstration drives, prepare trade-in appraisals with Sales Manager, and coordinate F&I handovers.',
+    applicationMode: 'internal',
+    externalApplyUrl: '',
+    requiresLicence: true,
+    licenceDescription: "Valid South African Code 8 (B) Driver's Licence",
+    closingDate: '2027-06-30',
+    active: true,
+    updatedBy: 'seed',
+  },
+  {
+    id: 'job-diagnostic-tech-ermelo',
+    title: 'Qualified Volkswagen Diagnostic Technician',
+    department: 'Aftersales & Workshop',
+    dealershipId: '2',
+    locationLabel: 'Ermelo, Mpumalanga',
+    employmentType: 'Full-Time',
+    summary:
+      'Perform warranty diagnostics, scheduled maintenance, and electrical fault-finding on modern TSI, TDI, and hybrid/electric VW platforms.',
+    requirements:
+      'Red Seal / Qualified Motor Mechanic Trade Certificate, VAG/VAS diagnostic experience preferred, valid Code 8 (EB) driver licence.',
+    responsibilities:
+      'Diagnose mechanical and electronic systems accurately, complete OEM quality control checklists, and mentor junior workshop apprentices.',
+    applicationMode: 'internal',
+    externalApplyUrl: '',
+    requiresLicence: true,
+    licenceDescription: "Red Seal Trade Certificate & Valid Driver's Licence",
+    closingDate: '2027-06-30',
+    active: true,
+    updatedBy: 'seed',
+  },
+  {
+    id: 'job-vwsa-apprentice-external',
+    title: 'Volkswagen Group Africa Technical Apprenticeship',
+    department: 'Apprenticeship & Academy',
+    dealershipId: null,
+    locationLabel: 'Kariega & Participating Group Branches',
+    employmentType: 'Apprenticeship',
+    summary:
+      'Structured manufacturer-led technical apprenticeship programme hosted via the official Volkswagen Group Africa external talent portal.',
+    requirements:
+      'Matric with Mathematics and Physical Science (or N2–N4 Motor Engineering), passion for automotive diagnostics, clean criminal & driving record.',
+    responsibilities:
+      'Complete OEM block-release technical training alongside hands-on approved workshop mentorship.',
+    applicationMode: 'external',
+    externalApplyUrl: 'https://www.vw.co.za/en/about-volkswagen/careers.html',
+    requiresLicence: false,
+    licenceDescription: '',
+    closingDate: '2027-08-31',
+    active: true,
+    updatedBy: 'seed',
+  },
+];
+
 export function getSitemapDirectory(
   branch: DealershipRecord,
   groupProfile: DealershipGroupProfile = DEFAULT_GROUP_PROFILE
@@ -778,6 +871,11 @@ export function getSitemapDirectory(
           label: 'Volkswagen Alert',
           route: '/vw-alert',
           description: `24/7 roadside assistance (${branch.roadsideAssist}), recall checks & customer care`,
+        },
+        {
+          label: 'Careers & Job Opportunities',
+          route: '/careers',
+          description: `Explore automotive retail, workshop, parts, and finance career opportunities across ${groupProfile.groupName}`,
         },
         {
           label: 'Contact Us',
@@ -863,6 +961,10 @@ export function getRouteSeoMeta(
     '/news': {
       title: `Motoring News & Events | ${branch.name}`,
       description: `Read Volkswagen South Africa manufacturing milestones, dealership events, and technology features at ${branch.name}.`,
+    },
+    '/careers': {
+      title: `Careers & Job Opportunities | ${branch.name}`,
+      description: `Apply for automotive sales, service technician, parts, and administration roles across ${groupProfile.groupName} dealerships.`,
     },
     '/contact': {
       title: `Contact Us & Trading Hours | ${branch.name}`,

@@ -16,7 +16,7 @@ export interface ParsedAutoTraderVehicle {
   mileage: number;
   transmission: string;
   fuelType: string;
-  category: 'New' | 'Used' | 'MasterCars';
+  category: 'New' | 'Demo' | 'MasterCars' | 'Used';
   bodyStyle: 'Hatchbacks & Sedans' | 'SUVs' | 'Commercial';
   powerKw: string;
   fuelEconomy: string;
@@ -125,8 +125,9 @@ export function inferBodyStyle(text: string): CmsVehicle['bodyStyle'] {
   return 'Hatchbacks & Sedans';
 }
 
-function inferCategory(text: string, mileage: number, isCertified = false): CmsVehicle['category'] {
+function inferCategory(text: string, mileage: number, isCertified = false, isDemo = false): CmsVehicle['category'] {
   const lower = text.toLowerCase();
+  if (isDemo || lower.includes('demo') || lower.includes('demonstrator')) return 'Demo';
   if (isCertified || lower.includes('mastercar')) return 'MasterCars';
   if (lower.includes('new car') || lower.includes('brand new') || (lower.includes('new') && mileage <= 50)) {
     return 'New';
@@ -252,7 +253,7 @@ function buildParsedVehicle(params: {
   mileage?: number;
   transmission?: string;
   fuelType?: string;
-  category?: 'New' | 'Used' | 'MasterCars';
+  category?: 'New' | 'Demo' | 'MasterCars' | 'Used';
   bodyStyle?: CmsVehicle['bodyStyle'];
   powerKw?: string;
   fuelEconomy?: string;
@@ -262,6 +263,7 @@ function buildParsedVehicle(params: {
   canonicalUrl?: string;
   contextText?: string;
   isCertified?: boolean;
+  isDemo?: boolean;
 }): ParsedAutoTraderVehicle | null {
   const cleanId = params.listingId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 56);
   const cleanTitle = decodeHtmlEntities(params.title || '').slice(0, 140);
@@ -295,7 +297,7 @@ function buildParsedVehicle(params: {
     .slice(0, 40);
 
   const category =
-    params.category ?? inferCategory(combinedText, mileage, Boolean(params.isCertified));
+    params.category ?? inferCategory(combinedText, mileage, Boolean(params.isCertified), Boolean(params.isDemo));
   const bodyStyle = params.bodyStyle ?? inferBodyStyle(combinedText);
   const images = sanitizeImageUrls(params.images ?? [], params.excludedImageUrls);
   const canonicalUrl = (params.canonicalUrl || '').trim().slice(0, 400);
@@ -495,6 +497,7 @@ function parseFromEmbeddedDealerProfile(
       canonicalUrl: r.canonicalUrl,
       contextText: `${r.newUsedDescription ?? ''} ${iconsJoined} ${r.isCommercial ? 'commercial' : ''}`,
       isCertified: Boolean(r.isCertifiedUsedCar),
+      isDemo: Boolean(r.isDemo),
     });
 
     if (built) {
@@ -693,8 +696,8 @@ export function normalizeAutoTraderJsonInput(
       : [];
 
     const categoryRaw = String(row.category ?? '');
-    const category: 'New' | 'Used' | 'MasterCars' | undefined =
-      categoryRaw === 'New' || categoryRaw === 'Used' || categoryRaw === 'MasterCars'
+    const category: 'New' | 'Demo' | 'MasterCars' | 'Used' | undefined =
+      categoryRaw === 'New' || categoryRaw === 'Demo' || categoryRaw === 'MasterCars' || categoryRaw === 'Used'
         ? categoryRaw
         : undefined;
 

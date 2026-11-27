@@ -5,8 +5,8 @@
 <h1 align="center">Multi-Branch Automotive Dealership Platform</h1>
 
 <p align="center">
-  <strong>White-label multi-dealership showroom, MasterCars inventory, Finance, Aftersales &amp; 5-Role Staff RBAC CMS</strong><br />
-  <sub>Supports 1, 2, 3, 4, or more Volkswagen branches under a single unified deployment</sub>
+  <strong>White-label multi-dealership showroom, MasterCars inventory, AI Licence Disc OCR, Careers &amp; 8-Role Staff RBAC CMS</strong><br />
+  <sub>Supports 1, 2, 3, 4, or more Volkswagen branches under a single unified deployment (Vercel, Docker, or VPS)</sub>
 </p>
 
 ![Dealership Showroom Hero](public/assets/aistudio/vwslider9_f252fed4.jpg)
@@ -17,18 +17,20 @@
 
 A single white-label codebase powers any Volkswagen dealership group—whether you run **1, 2, 3, 4, or more branches**—via dynamic hostname resolution (`src/context/DealershipContext.tsx`), Firestore corporate configuration (`/groupSettings/main`), or runtime `?branch=<id>` query overrides.
 
-- **White-Label Group & Dynamic Branch Management**: Administrators can register their own **Dealership Group Corporate Profile** (Group Name, Legal Entity, FSP Number, Compliance Officer/Email, Roadside numbers, Group Logos, Default Branch) and **add, edit, archive, restore, or safely delete dealership branches** directly inside `/admin` (`Group & Branches`). Deleting a branch is automatically blocked while vehicles, branch promotions, or assigned staff still reference it; archiving hides a branch cleanly while preserving audit history.
+- **White-Label Group & Dynamic Branch Management**: Administrators configure their **Dealership Group Corporate Profile**, fallback SMTP & platform URLs, live `.env` / Vercel variable builder, and **add, edit, archive, restore, or safely delete dealership branches** inside `/admin` (`Group & Branches`).
 - **Multi-Branch Runtime Resolution**: Automatically adapts dealership name, address, Google Maps embed, phone/WhatsApp links, trading hours, social links, SEO `<title>` / meta tags, and reference prefixes per active branch.
-- **Master Group Inventory (`/vehicles`)**: Showcases New, Used, and MasterCars stock with multi-image carousels, gearbox & fuel badges, holding-branch filters, and dual lead attribution (`submittedAtDealershipId` + `homeDealershipId`).
-- **5-Role Role-Based Staff Portal (`/admin`)**:
-  - **Administrator (`admin`)**: Full group-wide access across corporate settings, branches, staff users, leads, news, promotions, manual stock, and AutoTrader sync/import.
-  - **Car Sales Agent (`agent`)**: Branch-scoped access to manual vehicles (`source == 'manual'`) and branch `special` / `event` campaigns.
-  - **Marketing Coordinator (`marketing`)**: Group-wide management of **Motoring News** (`newsArticles`) and **Promotions** (`special`, `event`, `competition` across Master Group and all branches).
-  - **Parts Sales Executive (`parts`)**: Branch-scoped **Parts Leads** inbox (status updates only, no deletion) and branch department `special` campaigns.
-  - **Service Booking Clerk (`service`)**: Branch-scoped **Service Leads** inbox (status updates only, no deletion) and branch department `special` campaigns.
-- **First-Login Password Gate & One-Click Welcome Onboarding**: New staff receive a generated temporary password and must choose a personal password on first sign-in. After adding a staff member, `/admin` generates a ready-to-send welcome message with one-click **WhatsApp**, **Email App (`mailto:`)**, and **Copy** buttons.
-- **Automatic Customer Request Email Routing (Nodemailer SMTP)**: Customer submissions (Test Drives, Service Bookings, Parts Enquiries, Finance Applications, Vehicle Enquiries, Contact forms, Events, and Competitions) are automatically dispatched via Express (`POST /api/notify-lead`) to the department notification email configured on the target branch (`salesNotifyEmail`, `serviceNotifyEmail`, `partsNotifyEmail`, `financeNotifyEmail`, `generalNotifyEmail`) or group fallback (`defaultNotifyEmail`).
-- **Aftersales, Finance & Campaign Management**: Validated Service & Parts booking forms, test-drive hour rules, interactive ZAR finance calculator, auto-archiving campaigns, and Motoring News.
+- **Master Group Inventory (`/vehicles`) & AI Licence Disc OCR**: Showcases New, Demo, MasterCars, and Used stock (including Hybrid & Electric filters), plus Gemini-powered Licence Disc scanning on Service & Parts forms to auto-fill VIN, Engine Code, and Registration Plate.
+- **8-Role Staff Hierarchy & Timed IT Escalation Tickets (`/admin`)**:
+  - **Group Administrator (`admin`)**: Full group-wide access across corporate settings, branches, staff roles, leads, careers, news, promotions, manual stock, and AutoTrader sync.
+  - **IT Manager (`it_manager`)**: Group-wide branch/SMTP/AutoTrader setup, non-admin staff CRUD, and IT Escalation Ticket governance (approve timed access, resolve directly, reject, or revoke early).
+  - **Branch Admin / Dealer Principal (`branch_admin`)**: Full branch-scoped operations (all branch leads, manual stock, branch campaigns, branch careers, read-only branch staff & tickets).
+  - **Branch IT Agent (`it_agent`)**: Views branch readiness & submits timed role-escalation tickets reviewed by the IT Manager.
+  - **Car Sales Executive (`agent`)**: Branch manual vehicles, branch `special`/`event` campaigns, and **Spotter Referral Leads**.
+  - **Marketing Coordinator (`marketing`)**: Group-wide **Motoring News** and **Promotions** (`special`, `event`, `competition`).
+  - **Parts Sales Executive (`parts`)**: Branch-scoped **Parts Leads** inbox and branch Parts specials.
+  - **Service Booking Clerk (`service`)**: Branch-scoped **Service Leads** inbox and branch Service specials.
+- **In-App & Printable Handover Manual**: Built-in `.env` / Vercel Environment Variable builder, API & App Password acquisition guide with examples, and troubleshooting guide inside `/admin` (plus [`HANDOVER_MANUAL.md`](./HANDOVER_MANUAL.md)).
+- **Automatic Customer & Careers Emails (Nodemailer SMTP)**: Customer requests route automatically to branch department emails, and Careers status updates send from `careers@<location>volkswagen.co.za`.
 
 ---
 
@@ -41,11 +43,11 @@ A single white-label codebase powers any Volkswagen dealership group—whether y
 
 ---
 
-## Quick Start: Forking or Deploying Under Your Own Accounts
+## Quick Start: Handover, Vercel & Self-Hosting
 
-> **Need the complete Docker, PM2 + Nginx, multi-domain TLS/SSL, and data-center manual?** Read [`DEPLOYMENT.md`](./DEPLOYMENT.md).
+> **Handover & Complete Setup Pack:** Read **[`HANDOVER_MANUAL.md`](./HANDOVER_MANUAL.md)** for step-by-step API & password acquisition (with examples), **Vercel (`*.vercel.app`) deployment**, and future error fixes. Read **[`DEPLOYMENT.md`](./DEPLOYMENT.md)** for Docker and Linux VM (PM2 + Nginx + SSL) infrastructure setup.
 
-If you fork or clone this repository for your own dealership group, **replace the original owner's Firebase project, administrator email, optional API keys, and branding** so the application runs 100% under your own infrastructure and accounts.
+If you fork, clone, or hand over this repository for a new dealership group, **replace the original owner's Firebase project, administrator email, API keys, and branding** so the application runs 100% under the new owner's accounts.
 
 ### What You Will Need
 
@@ -116,16 +118,17 @@ cp .env.example .env
 | Variable | Required? | Purpose | Example |
 | :--- | :---: | :--- | :--- |
 | `PORT` | Optional | Port for Express (`server.ts`) | `3000` |
-| `APP_URL` | Optional | Public URL of your site | `https://www.yourdealership.co.za` |
-| `DECODO_API_KEY` | Optional | Your own Decodo API key for `/api/autotrader-scrape` | Leave blank if unused; never prefix with `VITE_` |
+| `APP_URL` | Recommended | Public URL of your site | `https://your-vw.vercel.app` |
+| `GEMINI_API_KEY` | For Disc Scan | Google Gemini key (`aistudio.google.com/apikey`) for Service/Parts Licence Disc OCR | `AIzaSyD4xK...` (never prefix with `VITE_`) |
+| `DECODO_API_KEY` | Optional | Decodo Web Data API key for `/api/autotrader-scrape` | Leave blank if unused; never prefix with `VITE_` |
 | `SMTP_HOST` | Optional | Outgoing mail server host (defaults to `smtp.gmail.com`) | `smtp.gmail.com` or `smtp.office365.com` |
 | `SMTP_PORT` | Optional | Outgoing SMTP port (`465` SSL/TLS or `587` STARTTLS) | `465` |
 | `SMTP_USER` | Recommended | SMTP login email (defaults to `BOOTSTRAPPED_ADMIN_EMAIL` if omitted) | `noreply@yourdealership.co.za` |
-| `SMTP_PASS` | Required for Email Alerts | Server-only SMTP password or 16-char Gmail App Password (never prefix with `VITE_`). Each branch can also define its own secret key (e.g. `SMTP_PASS_BRANCH_LADYSMITH`). | Store in AI Studio **Settings → Secrets** or `.env` |
+| `SMTP_PASS` | Required for Email Alerts | Server-only SMTP password or 16-char Gmail App Password (never prefix with `VITE_`). Each branch can also define its own secret key (e.g. `SMTP_PASS_BRANCH_LADYSMITH`). | Store in `.env`, Vercel Env, or AI Studio **Secrets** |
 | `SMTP_FROM` | Optional | Friendly From header (defaults to `Dealership Requests <SMTP_USER>`) | `Your VW Group <noreply@yourdealership.co.za>` |
 | `DEFAULT_LEAD_NOTIFY_EMAIL` | Optional | Emergency fallback recipient if branch/group emails are empty | `leads@yourdealership.co.za` |
 
-> Staff welcome onboarding still requires zero email credentials (using one-click **WhatsApp**, **Email App**, or **Copy**). Customer request email alerts run via Nodemailer when `SMTP_PASS` (or per-branch `SMTP_PASS_BRANCH_<ID>`) is set, and every branch configures its own outgoing identity (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`) plus a downloadable **Dealer Principal Setup Guide** directly inside `/admin` → **Group & Branches**.
+> Staff welcome onboarding still requires zero email credentials (using one-click **WhatsApp**, **Email App**, or **Copy**). Every branch configures its own outgoing identity (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`), and `/admin` provides both a **Dealer Principal Email Setup Guide** and the complete **System Setup & Handover Manual** (`.html` / `.md` / `.env.template`).
 
 ### Step 6: Update Static Fallbacks & Run Locally
 

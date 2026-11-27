@@ -6,9 +6,14 @@ import {
   SATURDAY_TEST_DRIVE_SLOTS,
   WEEKDAY_TEST_DRIVE_SLOTS,
 } from '../data/dealership';
+import {
+  buildCustomerAgentSummary,
+  LicenceDiscScanResult,
+} from '../lib/licenceDiscScanner';
 import { cn, formatZAR, generateBookingRef } from '../lib/utils';
 import { LeadSubmissionType, ModalContextState } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
+import { LicenceDiscUploader } from './LicenceDiscUploader';
 import { Button, Dialog, Input, Label, Select, Textarea } from './ui/shadcn';
 
 interface DealershipModalsProps {
@@ -79,8 +84,10 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
   const [preferredTime, setPreferredTime] = useState('09:00');
   const [vehicleReg, setVehicleReg] = useState('');
   const [vinNumber, setVinNumber] = useState('');
+  const [engineNumber, setEngineNumber] = useState('');
   const [mileageKm, setMileageKm] = useState('');
   const [notes, setNotes] = useState('');
+  const [scannedDisc, setScannedDisc] = useState<LicenceDiscScanResult | null>(null);
   const [errorSummary, setErrorSummary] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrorMap>({});
   const [submittedRef, setSubmittedRef] = useState<string | null>(null);
@@ -107,6 +114,8 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     setVehicleModel('');
     setVehicleReg('');
     setVinNumber('');
+    setEngineNumber('');
+    setScannedDisc(null);
     setMileageKm('');
     setNotes(
       modal.dealSummary
@@ -114,7 +123,9 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
         : modal.eventTitle
         ? `RSVP for event: ${modal.eventTitle}`
         : modal.competitionTitle
-        ? `Competition entry: ${modal.competitionTitle}`
+        ? modal.competitionTitle.toLowerCase().includes('spotter')
+          ? `Spotter Referral (${modal.competitionTitle}) — Buyer Name & Mobile: `
+          : `Competition entry: ${modal.competitionTitle}`
         : ''
     );
     if (modal.vehicleName) {
@@ -261,12 +272,16 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       ctaLabel: 'Confirm Event RSVP',
     },
     'competition-entry': {
-      title: 'Enter Dealership Competition',
+      title: modal.competitionTitle?.toLowerCase().includes('spotter')
+        ? 'Submit Spotter Referral Lead'
+        : 'Enter Dealership Competition',
       subtitle:
         modal.competitionTitle ||
         `Submit your entry with ${activeDealership.name} (${groupProfile.groupName}).`,
       prefix: 'CMP',
-      ctaLabel: 'Submit Competition Entry',
+      ctaLabel: modal.competitionTitle?.toLowerCase().includes('spotter')
+        ? 'Submit Spotter Referral'
+        : 'Submit Competition Entry',
     },
     contact: {
       title: `Contact ${activeDealership.name}`,
@@ -392,7 +407,19 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
       return;
     }
 
-    const ref = generateBookingRef(activeMeta.prefix, activeDealership.referenceCode || activeDealership.id);
+    const isSpotterReferral = Boolean(
+      modal.type === 'competition-entry' &&
+        modal.competitionTitle?.toLowerCase().includes('spotter')
+    );
+    const effectiveRefPrefix = isSpotterReferral ? 'SPT' : activeMeta.prefix;
+    const effectiveLeadType: LeadSubmissionType = isSpotterReferral
+      ? 'spotter'
+      : (modal.type as LeadSubmissionType);
+
+    const ref = generateBookingRef(
+      effectiveRefPrefix,
+      activeDealership.referenceCode || activeDealership.id
+    );
     setFieldErrors({});
     setErrorSummary('');
     setSubmittedRef(ref);
@@ -401,15 +428,39 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
     const aftersalesVehicleTitle =
       typedVagLabel || (vinNumber.trim() ? `VIN ${vinNumber.trim()}` : 'VAG Group Vehicle');
 
+    const aftersalesDetails =
+      modal.type === 'service' || modal.type === 'parts'
+        ? buildCustomerAgentSummary({
+            requestKind: modal.type,
+            fullName,
+            phone,
+            email,
+            branchName: activeDealership.name,
+            vehicleLabel: typedVagLabel,
+            vinNumber,
+            engineNumber,
+            vehicleReg,
+            serviceType,
+            mileageKm,
+            preferredDate,
+            notes,
+            scannedDisc,
+          })
+        : modal.type === 'test-drive'
+        ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
+        : notes || modal.dealSummary || 'General enquiry submitted.';
+
     void submitLead({
       id: ref.toLowerCase(),
-      leadType: modal.type as LeadSubmissionType,
+      leadType: effectiveLeadType,
       fullName,
       phone,
       email,
       subject:
         modal.type === 'event-rsvp'
           ? modal.eventTitle || 'Dealership Event RSVP'
+          : isSpotterReferral
+          ? modal.competitionTitle || 'Spotter Referral Lead'
           : modal.type === 'competition-entry'
           ? modal.competitionTitle || 'Dealership Competition Entry'
           : modal.type === 'service'
@@ -417,14 +468,7 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
           : modal.type === 'parts'
           ? `Genuine VAG Parts — ${aftersalesVehicleTitle}`
           : `${activeMeta.title} — ${selectedModel}`,
-      details:
-        modal.type === 'test-drive'
-          ? `Preferred Slot: ${preferredDate} at ${preferredTime} | Notes: ${notes || 'None'}`
-          : modal.type === 'service'
-          ? `Vehicle: ${typedVagLabel || 'Identified by VIN'} | Reg: ${vehicleReg} | VIN: ${vinNumber} | Mileage: ${mileageKm} km | Date: ${preferredDate} | Notes: ${notes || 'None'}`
-          : modal.type === 'parts'
-          ? `Vehicle: ${typedVagLabel || 'Identified by VIN'} | VIN: ${vinNumber || 'Not provided'} | Reg: ${vehicleReg || 'Not provided'} | Part Required: ${notes}`
-          : notes || modal.dealSummary || 'General enquiry submitted.',
+      details: aftersalesDetails,
       homeDealershipId: effectiveHomeBranchId,
     });
   };
@@ -448,7 +492,9 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 : modal.type === 'event-rsvp'
                 ? 'Event RSVP Confirmed'
                 : modal.type === 'competition-entry'
-                ? 'Competition Entry Recorded'
+                ? modal.competitionTitle?.toLowerCase().includes('spotter')
+                  ? 'Spotter Referral Lead Logged'
+                  : 'Competition Entry Recorded'
                 : 'Request Confirmed'}
             </h3>
 
@@ -534,6 +580,12 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 <p>Service Type: {serviceType}</p>
                 <p>Registration: {vehicleReg.trim()}</p>
                 <p>VIN: {vinNumber.trim()}</p>
+                {engineNumber.trim() && <p>Engine Code / No.: {engineNumber.trim()}</p>}
+                {scannedDisc && (
+                  <p className="text-emerald-800">
+                    Licence Disc Verified: {scannedDisc.fileName}
+                  </p>
+                )}
                 <p>Current Mileage: {Number(mileageKm).toLocaleString('en-ZA')} km</p>
                 <p>Preferred Date: {preferredDate}</p>
               </>
@@ -548,6 +600,12 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                 )}
                 {vehicleReg.trim() && <p>Registration: {vehicleReg.trim()}</p>}
                 {vinNumber.trim() && <p>VIN: {vinNumber.trim()}</p>}
+                {engineNumber.trim() && <p>Engine Code / No.: {engineNumber.trim()}</p>}
+                {scannedDisc && (
+                  <p className="text-emerald-800">
+                    Licence Disc Verified: {scannedDisc.fileName}
+                  </p>
+                )}
               </>
             )}
             {modal.financePreset && modal.type === 'finance' && (
@@ -766,6 +824,36 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
 
           {modal.type === 'service' && (
             <>
+              <LicenceDiscUploader
+                mode="service"
+                scannedDisc={scannedDisc}
+                onScanComplete={(result) => {
+                  setScannedDisc(result);
+                  const ext = result.extracted;
+                  if (ext.vin) {
+                    setVinNumber(ext.vin);
+                    clearFieldError('vinNumber');
+                  }
+                  if (ext.engineNumber) {
+                    setEngineNumber(ext.engineNumber);
+                  }
+                  if (ext.registrationNumber) {
+                    setVehicleReg(ext.registrationNumber);
+                    clearFieldError('vehicleReg');
+                  }
+                  if (ext.year) {
+                    setVehicleYear(ext.year);
+                    clearFieldError('vehicleYear');
+                  }
+                  const combinedModel = [ext.make, ext.model].filter(Boolean).join(' ').trim();
+                  if (combinedModel) {
+                    setVehicleModel(combinedModel);
+                    clearFieldError('vehicleModel');
+                  }
+                }}
+                onClearScan={() => setScannedDisc(null)}
+              />
+
               <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
                 <p className="text-xs font-semibold text-[#001E50]">
                   VAG Vehicle Identification (VW, Audi, Porsche, SEAT &amp; Škoda)
@@ -815,6 +903,18 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                       onChange={(e) => setVehicleModel(e.target.value)}
                     />
                   </div>
+                </div>
+                <div>
+                  <Label htmlFor="modal-service-engine">
+                    Engine Code / Engine Number (Auto-filled from Licence Disc or Optional)
+                  </Label>
+                  <Input
+                    id="modal-service-engine"
+                    placeholder="e.g. CLP123456 or CZPA084210"
+                    value={engineNumber}
+                    className="bg-white font-mono"
+                    onChange={(e) => setEngineNumber(e.target.value.toUpperCase())}
+                  />
                 </div>
               </div>
 
@@ -904,6 +1004,39 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
 
           {modal.type === 'parts' && (
             <div className="space-y-4">
+              <LicenceDiscUploader
+                mode="parts"
+                scannedDisc={scannedDisc}
+                onScanComplete={(result) => {
+                  setScannedDisc(result);
+                  const ext = result.extracted;
+                  if (ext.vin) {
+                    setVinNumber(ext.vin);
+                    clearFieldError('vinNumber');
+                    clearFieldError('vehicleYear');
+                    clearFieldError('vehicleModel');
+                  }
+                  if (ext.engineNumber) {
+                    setEngineNumber(ext.engineNumber);
+                  }
+                  if (ext.registrationNumber) {
+                    setVehicleReg(ext.registrationNumber);
+                  }
+                  if (ext.year) {
+                    setVehicleYear(ext.year);
+                    clearFieldError('vehicleYear');
+                    clearFieldError('vinNumber');
+                  }
+                  const combinedModel = [ext.make, ext.model].filter(Boolean).join(' ').trim();
+                  if (combinedModel) {
+                    setVehicleModel(combinedModel);
+                    clearFieldError('vehicleModel');
+                    clearFieldError('vinNumber');
+                  }
+                }}
+                onClearScan={() => setScannedDisc(null)}
+              />
+
               <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 space-y-3">
                 <p className="text-xs font-semibold text-[#001E50]">
                   Identify VAG Vehicle (Enter VIN OR Type Year + Make/Model)
@@ -973,6 +1106,18 @@ export function DealershipModals({ modal, onClose }: DealershipModalsProps) {
                       </p>
                     )}
                   </div>
+                </div>
+                <div>
+                  <Label htmlFor="modal-parts-engine">
+                    Engine Code / Engine Number (Auto-filled from Licence Disc or Optional)
+                  </Label>
+                  <Input
+                    id="modal-parts-engine"
+                    placeholder="e.g. CLP123456 or CZPA084210"
+                    value={engineNumber}
+                    className="bg-white font-mono"
+                    onChange={(e) => setEngineNumber(e.target.value.toUpperCase())}
+                  />
                 </div>
               </div>
 

@@ -132,6 +132,7 @@ export function Footer({ onNavigate }: FooterProps) {
               <li>{linkButton('Vehicle Finance', '/finance')}</li>
               <li>{linkButton('Service & Parts', '/aftersales')}</li>
               <li>{linkButton('Volkswagen Alert', '/vw-alert')}</li>
+              <li>{linkButton('Careers', '/careers')}</li>
               <li>{linkButton('Dealership Admin', '/admin')}</li>
             </ul>
           </div>

@@ -8,6 +8,7 @@ import { MotionConfig } from 'motion/react';
 import { AdminPortalPage } from './components/AdminPortalPage';
 import { AftersalesPage } from './components/AftersalesPage';
 import { DedicatedBookingPage } from './components/BookingPageShell';
+import { CareersPage } from './components/CareersPage';
 import { ContactSection } from './components/ContactSection';
 import { DealershipModals } from './components/DealershipModals';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -15,7 +16,7 @@ import { FinanceSection } from './components/FinanceSection';
 import { Footer } from './components/Footer';
 import { HeroSection } from './components/HeroSection';
 import { HomeOverviewHub } from './components/HomeOverviewHub';
-import { HomeShowroomCarousel } from './components/HomeShowroomCarousel';
+import { HomePromotionsShowcase } from './components/HomePromotionsShowcase';
 import {
   PrivacyPolicyPage,
   SitemapPage,
@@ -24,11 +25,12 @@ import {
 import { Navbar } from './components/Navbar';
 import { NewsAndEventsPage } from './components/NewsAndEventsPage';
 import { ShowroomInventoryView } from './components/ShowroomInventoryView';
+import { VehicleSearchShowcase } from './components/VehicleSearchShowcase';
 import { VwAlertEmergencyBar, VwAlertPage } from './components/VwAlertSection';
 import { DealershipProvider, useDealership } from './context/DealershipContext';
 import { DealershipDataProvider } from './context/DealershipDataContext';
 import { getRouteSeoMeta } from './data/dealership';
-import { AppRoute, ModalContextState } from './types/dealership';
+import { AppRoute, CmsVehicle, ModalContextState } from './types/dealership';
 
 const VALID_ROUTES: AppRoute[] = [
   '/',
@@ -42,6 +44,7 @@ const VALID_ROUTES: AppRoute[] = [
   '/vw-alert',
   '/news-events',
   '/news',
+  '/careers',
   '/contact',
   '/privacy-policy',
   '/terms',
@@ -103,12 +106,28 @@ function DealershipShell() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const openFinanceForVehicle = (vehicle: CmsVehicle) =>
+    setModal({
+      type: 'finance',
+      vehicleName: vehicle.title,
+      vehiclePrice: vehicle.price,
+      homeDealershipId: vehicle.homeDealershipId,
+      financePreset: {
+        vehiclePrice: vehicle.price,
+        depositPercent: 10,
+        balloonPercent: 30,
+        termMonths: 72,
+        monthlyEstimate: vehicle.monthlyFrom,
+      },
+    });
+
   const renderPageContent = () => {
     switch (currentRoute) {
       case '/vehicles':
         return (
           <ShowroomInventoryView
             mode="vehicles"
+            onNavigate={navigateTo}
             onBookTestDrive={(vehicleName, homeDealershipId) =>
               setModal({ type: 'test-drive', vehicleName, homeDealershipId })
             }
@@ -121,6 +140,7 @@ function DealershipShell() {
                 homeDealershipId: item.homeDealershipId,
               })
             }
+            onApplyFinance={openFinanceForVehicle}
           />
         );
       case '/specials':
@@ -191,6 +211,8 @@ function DealershipShell() {
             }
           />
         );
+      case '/careers':
+        return <CareersPage />;
       case '/contact':
         return (
           <div className="pt-16">
@@ -222,18 +244,48 @@ function DealershipShell() {
 
             <VwAlertEmergencyBar onOpenVwAlert={() => navigateTo('/vw-alert')} />
 
-            <HomeShowroomCarousel
+            <VehicleSearchShowcase
+              variant="home"
+              pageSize={6}
               onNavigate={navigateTo}
               onBookTestDrive={(vehicleName, homeDealershipId) =>
                 setModal({ type: 'test-drive', vehicleName, homeDealershipId })
               }
-              onEnquireVehicle={(vehicle, dealSummary) =>
+              onEnquireDeal={(item) =>
                 setModal({
                   type: 'vehicle-inquiry',
-                  vehicleName: vehicle.title,
-                  vehiclePrice: vehicle.price,
-                  dealSummary,
-                  homeDealershipId: vehicle.homeDealershipId,
+                  vehicleName: item.title,
+                  vehiclePrice: item.price,
+                  dealSummary: item.dealSummary,
+                  homeDealershipId: item.homeDealershipId,
+                })
+              }
+              onApplyFinance={openFinanceForVehicle}
+            />
+
+            <HomePromotionsShowcase
+              onNavigate={navigateTo}
+              onEnterCompetition={(competitionTitle, homeDealershipId) =>
+                setModal({
+                  type: 'competition-entry',
+                  competitionTitle,
+                  homeDealershipId: homeDealershipId ?? activeDealership.id,
+                })
+              }
+              onEnquireDeal={(item) =>
+                setModal({
+                  type: 'vehicle-inquiry',
+                  vehicleName: item.title,
+                  vehiclePrice: item.price,
+                  dealSummary: item.dealSummary,
+                  homeDealershipId: item.homeDealershipId,
+                })
+              }
+              onBookTestDrive={(vehicleName, homeDealershipId) =>
+                setModal({
+                  type: 'test-drive',
+                  vehicleName,
+                  homeDealershipId: homeDealershipId ?? activeDealership.id,
                 })
               }
             />

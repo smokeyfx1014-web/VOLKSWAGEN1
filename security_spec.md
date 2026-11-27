@@ -3,35 +3,39 @@
 ## 1. Data Invariants
 1. **Default Deny**: Any unmatched collection or document is denied read/write access.
 2. **Dealership Group & Dynamic Branch Integrity**:
-   - `/groupSettings/main` holds corporate group identity (`groupName`, `legalEntity`, `fspNumber`, compliance details, logos, `defaultBranchId`), publicly readable via `get` and writable solely by verified Admins.
-   - `/dealerships/{branchId}` supports dynamic branch IDs matching `^[a-zA-Z0-9_-]{1,64}$` (enabling 1, 2, 3, 4, or more branches). Writable and deletable solely by verified Admins. Optional `autotraderUrl` must be empty or match `^https://(www\.)?autotrader\.co\.za/dealer/.*$`.
-3. **Master Group Stock Integrity**: Public readers may only read/list `/vehicles` where `status == 'available'`. Admins may create, update, or delete any vehicle across all branches. Active Car Sales Agents (`role == 'agent'`) may create, update, or delete ONLY manual vehicles (`source == 'manual'`) belonging strictly to their `allocatedDealershipId`. Marketing, Parts Sales Executives, and Service Booking Clerks cannot modify vehicle inventory.
+   - `/groupSettings/main` holds corporate group identity (`groupName`, `legalEntity`, `fspNumber`, compliance details, logos, `defaultBranchId`), publicly readable via `get` and writable solely by Group Admins (`role == 'admin'`).
+   - `/dealerships/{branchId}` supports dynamic branch IDs matching `^[a-zA-Z0-9_-]{1,64}$`. Creatable by Group Admins or Group IT Manager; updatable by Group Admins, Group IT Manager, or the branch's assigned Branch Admin; deletable solely by Group Admins.
+3. **Master Group Stock Integrity**: Public readers may only read/list `/vehicles` where `status == 'available'`. Group Admins, IT Manager, and Branch Admins (for their branch) may create, update, or delete vehicles. Car Sales Executives (`role == 'agent'`) may create, update, or delete ONLY manual vehicles (`source == 'manual'`) belonging strictly to their `allocatedDealershipId`.
 4. **Scoped Promotions & Motoring News Consistency**:
    - `/promotions` enforces `scope == 'MASTER' => dealershipId == null` and `scope == 'BRANCH' => isValidBranchId(dealershipId)`. Public queries require `active == true`.
-   - **Admins** & **Marketing (`role == 'marketing'`)**: Full group-wide management of `special`, `event`, and `competition` campaigns (`MASTER` or `BRANCH`) and `/news` articles.
-   - **Car Sales Agents (`role == 'agent'`)**: Manage `type in ['special', 'event']` scoped strictly to `scope == 'BRANCH'` and `dealershipId == allocatedDealershipId`.
-   - **Parts Sales Executives (`role == 'parts'`) & Service Booking Clerks (`role == 'service'`)**: Manage `type == 'special'` scoped strictly to `scope == 'BRANCH'` and `dealershipId == allocatedDealershipId`.
-5. **PII Isolation & Department-Scoped Lead Access (`/leads/{leadId}`)**:
-   - Public creation allowed ONLY with `status == 'new'`, `createdAt == request.time`, `details.size() <= 6000`, and valid branch attribution.
-   - **Admins**: Full read, status update, and delete on all leads.
-   - **Parts Sales Executives (`role == 'parts'`)**: Read (`get`/`list`) and update (`status` only) ONLY leads with `leadType == 'parts'` attributed to their `allocatedDealershipId` (`submittedAtDealershipId` or `homeDealershipId`). Cannot read finance, test-drive, service, or contact leads, and cannot delete leads.
-   - **Service Booking Clerks (`role == 'service'`)**: Read (`get`/`list`) and update (`status` only) ONLY leads with `leadType == 'service'` attributed to their `allocatedDealershipId` (`submittedAtDealershipId` or `homeDealershipId`). Cannot read parts, finance, or vehicle leads, and cannot delete leads.
-   - **Car Sales Agents & Marketing**: Zero access to `/leads`.
-6. **Verified Admin & 5-Role Staff Roster Gate (`/staffUsers/{uid}`)**:
-   - Roles: `admin`, `agent`, `marketing`, `parts`, `service`.
-   - Group-wide roles (`admin`, `marketing`) may have `allocatedDealershipId == null` or a valid branch ID; branch-scoped roles (`agent`, `parts`, `service`) strictly require a valid `allocatedDealershipId`.
-   - Only Admins can list, create, modify role/branch/active, or delete staff users. Individual staff may ONLY `get` their own profile and execute the single self-update clearing `mustChangePassword` from `true` to `false`.
+   - **Group Admins**, **IT Manager**, & **Marketing (`role == 'marketing'`)**: Full group-wide management of `special`, `event`, and `competition` campaigns and `/news` articles.
+   - **Branch Admin (`role == 'branch_admin'`)**: Full management of `special`, `event`, and `competition` campaigns scoped strictly to their `allocatedDealershipId`.
+   - **Car Sales Executives (`role == 'agent'`)**: Manage `type in ['special', 'event']` scoped strictly to their branch.
+   - **Parts Agents (`role == 'parts'`) & Service Booking Agents (`role == 'service'`)**: Manage `type == 'special'` scoped strictly to their branch.
+5. **PII Isolation & Role-Scoped Lead Access (`/leads/{leadId}`)**:
+   - Public creation allowed ONLY with `status == 'new'`, `createdAt == request.time`, valid `leadType`, `details.size() <= 6000`, and valid branch attribution.
+   - **Group Admins** & **IT Manager**: Full read & status updates on all leads across all branches; Group Admins only can delete leads.
+   - **Branch Admin / Dealer Principal (`role == 'branch_admin'`)**: Full read & status updates on ALL lead types belonging to their `allocatedDealershipId`.
+   - **Parts Agents (`role == 'parts'`)**: Read (`get`/`list`) and update (`status` only) ONLY `leadType == 'parts'` attributed to their branch.
+   - **Service Booking Agents (`role == 'service'`)**: Read (`get`/`list`) and update (`status` only) ONLY `leadType == 'service'` attributed to their branch.
+   - **Car Sales Executives (`role == 'agent'`)**: Read (`get`/`list`) and update (`status` only) ONLY Spotter leads (`leadType in ['spotter', 'competition-entry']`) attributed to their branch.
+   - **Marketing & Non-Escalated IT Agents**: Zero direct access to `/leads`.
+6. **Verified 8-Role Staff Roster & Server-Time Escalation Gate (`/staffUsers/{uid}`, `/itTickets/{ticketId}`)**:
+   - Roles: `admin`, `branch_admin`, `it_manager`, `it_agent`, `agent`, `parts`, `marketing`, `service`.
+   - Only Group Admins and the Group IT Manager may create/update staff accounts, and the IT Manager cannot create, modify, promote, or deactivate `admin` or `it_manager` accounts.
+   - Branch IT Agents (`role == 'it_agent'`) may submit `/itTickets` escalation requests (`status == 'open'`) for their assigned branch only, and cannot self-approve or write `activeEscalation`.
+   - When an IT Manager or Group Admin grants a temporary escalation on `/staffUsers/{uid}.activeEscalation`, every Firestore rule checks `activeEscalation.expiresAt > request.time` against server time so expired escalations lose all elevated permissions automatically.
 
 ## 2. Adversarial Payloads ("Dirty Dozen")
-1. **Unauthenticated Group/Branch Hijack**: Non-admin (including Marketing/Parts/Service/Agent) writes `/groupSettings/main` or `/dealerships/branch-4` -> `PERMISSION_DENIED`.
-2. **Invalid Branch ID Injection**: Admin attempts `setDoc(/dealerships/bad id!, ...)` -> `PERMISSION_DENIED`.
-3. **Public Scraping of Sold/Reserved Stock**: Anonymous client queries `/vehicles` without `where('status', '==', 'available')` -> `PERMISSION_DENIED`.
-4. **Cross-Branch Vehicle Injection by Sales Agent**: Agent (`allocatedDealershipId: '1'`) creates `/vehicles/test` with `homeDealershipId: '2'` -> `PERMISSION_DENIED`.
-5. **Marketing Attempting Vehicle or Lead Access**: Marketing user attempts write on `/vehicles/*` or `getDocs(/leads)` -> `PERMISSION_DENIED`.
-6. **Parts Executive Reading Service or Finance Leads**: Parts Executive (`role: 'parts'`, `allocatedDealershipId: '1'`) queries `/leads` with `leadType == 'service'` or `leadType == 'finance'` -> `PERMISSION_DENIED`.
-7. **Service Clerk Cross-Branch or Delete Attempt**: Service Clerk (`allocatedDealershipId: '1'`) queries `service` leads for branch `'2'`, edits customer `phone`, or deletes a lead -> `PERMISSION_DENIED`.
-8. **Parts/Service Creating Competitions or Master Promotions**: Parts Executive or Service Clerk creates promotion with `scope: 'MASTER'` or `type: 'competition'` -> `PERMISSION_DENIED`.
-9. **Self-Role Escalation on `/staffUsers/{ownUid}`**: Any non-admin staff member updates `/staffUsers/{ownUid}` setting `role: 'admin'` or changing `allocatedDealershipId` -> `PERMISSION_DENIED`.
-10. **Shadow Field Injection**: Extra key `isAdmin: true` on `/groupSettings`, `/dealerships`, `/staffUsers`, `/vehicles`, `/promotions`, `/news`, or `/leads` -> `PERMISSION_DENIED`.
-11. **Backdated Timestamp Poisoning**: Client supplies custom Date instead of `request.time` -> `PERMISSION_DENIED`.
-12. **Privilege Escalation via Admins Doc**: Non-admin user writes `/admins/{ownUid}` with `role: 'admin'` -> `PERMISSION_DENIED`.
+1. **Unauthenticated Group/Branch Hijack**: Non-admin (including Marketing/Parts/Service/Agent/IT Agent) writes `/groupSettings/main` or creates `/dealerships/branch-4` -> `PERMISSION_DENIED`.
+2. **IT Agent Self-Escalation**: IT Agent updates `/staffUsers/{ownUid}` to inject `activeEscalation` or change `role` -> `PERMISSION_DENIED`.
+3. **IT Agent Self-Approving Ticket**: IT Agent updates `/itTickets/{ticketId}` to set `status: 'approved_temporary'` -> `PERMISSION_DENIED`.
+4. **Expired Temporary Escalation**: IT Agent uses expired `activeEscalation` (`expiresAt <= request.time`) to read `/leads` or edit `/vehicles` -> `PERMISSION_DENIED`.
+5. **IT Manager Privilege Escalation**: IT Manager attempts to create/promote an `'admin'` or `'it_manager'` user or write `/admins/{uid}` -> `PERMISSION_DENIED`.
+6. **Branch Admin Cross-Branch Access**: Branch Admin (`allocatedDealershipId: '1'`) queries `/leads` or `/jobApplications` for branch `'2'` -> `PERMISSION_DENIED`.
+7. **Parts/Service Cross-Department Lead Access**: Parts Agent reads `service` or `spotter` leads, or Service Agent reads `parts` leads -> `PERMISSION_DENIED`.
+8. **Sales Executive Non-Spotter Lead Access**: Sales Executive (`role == 'agent'`) queries `finance` or `service` leads -> `PERMISSION_DENIED`.
+9. **Public Scraping of Sold/Reserved Stock**: Anonymous client queries `/vehicles` without `where('status', '==', 'available')` -> `PERMISSION_DENIED`.
+10. **Shadow Field Injection**: Extra fields on `/itTickets`, `/staffUsers`, `/leads`, `/vehicles`, `/promotions`, `/dealerships` -> `PERMISSION_DENIED`.
+11. **Backdated Timestamp Poisoning**: Client supplies backdated timestamp instead of `request.time` -> `PERMISSION_DENIED`.
+12. **Privilege Escalation via Admins Doc**: Non-Group-Admin writes `/admins/{ownUid}` -> `PERMISSION_DENIED`.

@@ -17,6 +17,7 @@ const NAV_LINKS: { label: string; route: AppRoute }[] = [
   { label: 'Finance', route: '/finance' },
   { label: 'Aftersales', route: '/aftersales' },
   { label: 'News & Events', route: '/news-events' },
+  { label: 'Careers', route: '/careers' },
   { label: 'Contact', route: '/contact' },
 ];
 
@@ -98,7 +99,7 @@ export function Navbar({ currentRoute, onNavigate, onOpenTestDrive }: NavbarProp
           {/* Zone 2: Primary Single-Line Navigation */}
           <nav
             aria-label="Primary dealership navigation"
-            className="hidden lg:flex items-center gap-6"
+            className="hidden lg:flex items-center gap-4 xl:gap-6"
           >
             {NAV_LINKS.map((link) => {
               const isActive =

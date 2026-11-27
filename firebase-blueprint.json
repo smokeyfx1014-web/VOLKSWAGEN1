@@ -19,6 +19,14 @@
         "youtubeUrl": { "type": "string", "maxLength": 300 },
         "defaultBranchId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
         "defaultNotifyEmail": { "type": "string", "maxLength": 140 },
+        "primarySiteUrl": { "type": "string", "maxLength": 300 },
+        "smtpHost": { "type": "string", "maxLength": 140 },
+        "smtpPort": { "type": "number" },
+        "smtpUser": { "type": "string", "maxLength": 140 },
+        "smtpFrom": { "type": "string", "maxLength": 180 },
+        "smtpPassEnvKey": { "type": "string", "maxLength": 60, "pattern": "^SMTP_PASS(?:_[A-Z0-9_]{1,40})?$" },
+        "licenceScannerEnabled": { "type": "boolean" },
+        "autotraderSyncDefault": { "type": "boolean" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
       },
@@ -126,7 +134,7 @@
         "mileage": { "type": "number" },
         "transmission": { "type": "string", "minLength": 2, "maxLength": 60 },
         "fuelType": { "type": "string", "minLength": 2, "maxLength": 40 },
-        "category": { "type": "string", "enum": ["New", "Used", "MasterCars"] },
+        "category": { "type": "string", "enum": ["New", "Demo", "MasterCars", "Used"] },
         "bodyStyle": { "type": "string", "enum": ["Hatchbacks & Sedans", "SUVs", "Commercial"] },
         "powerKw": { "type": "string", "minLength": 2, "maxLength": 40 },
         "fuelEconomy": { "type": "string", "minLength": 2, "maxLength": 40 },
@@ -252,7 +260,7 @@
         "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
         "leadType": {
           "type": "string",
-          "enum": ["test-drive", "service", "parts", "finance", "vehicle-inquiry", "contact", "event-rsvp", "competition-entry"]
+          "enum": ["test-drive", "service", "parts", "spotter", "finance", "vehicle-inquiry", "contact", "event-rsvp", "competition-entry"]
         },
         "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
         "phone": { "type": "string", "minLength": 7, "maxLength": 30 },
@@ -299,10 +307,11 @@
         "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
         "phone": { "type": "string", "minLength": 7, "maxLength": 30 },
         "email": { "type": "string", "minLength": 5, "maxLength": 140 },
-        "role": { "type": "string", "enum": ["admin", "agent", "parts", "marketing", "service"] },
+        "role": { "type": "string", "enum": ["admin", "branch_admin", "it_manager", "it_agent", "agent", "parts", "marketing", "service"] },
         "allocatedDealershipId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
         "mustChangePassword": { "type": "boolean" },
         "active": { "type": "boolean" },
+        "activeEscalation": { "type": "object" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "createdBy": { "type": "string", "minLength": 2, "maxLength": 128 },
@@ -321,6 +330,143 @@
         "updatedAt",
         "createdBy",
         "updatedBy"
+      ]
+    },
+    "ItEscalationTicket": {
+      "title": "ItEscalationTicket",
+      "description": "IT Agent role-escalation and technical support ticket reviewed by the Group IT Manager or Group Administrator.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "requesterUid": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "requesterName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "requesterEmail": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "requesterBranchId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "targetDealershipId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "requestedRole": { "type": "string", "enum": ["branch_admin", "agent", "parts", "service", "marketing"] },
+        "requestedDurationMinutes": { "type": "number" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "reason": { "type": "string", "minLength": 5, "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["open", "approved_temporary", "resolved", "rejected", "revoked"] },
+        "reviewNote": { "type": "string", "maxLength": 1000 },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "reviewedByName": { "type": "string", "maxLength": 120 },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "requesterUid",
+        "requesterName",
+        "requesterEmail",
+        "requesterBranchId",
+        "targetDealershipId",
+        "requestedRole",
+        "requestedDurationMinutes",
+        "title",
+        "reason",
+        "status",
+        "reviewNote",
+        "reviewedByUid",
+        "reviewedByName",
+        "approvedAt",
+        "expiresAt",
+        "resolvedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "JobOpening": {
+      "title": "JobOpening",
+      "description": "Career job opening listed by the dealership group supporting internal on-site applications or external application portal links.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "department": { "type": "string", "minLength": 2, "maxLength": 80 },
+        "dealershipId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "locationLabel": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "employmentType": { "type": "string", "enum": ["Full-Time", "Part-Time", "Apprenticeship", "Fixed-Term"] },
+        "closingDate": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$", "maxLength": 10 },
+        "summary": { "type": "string", "minLength": 10, "maxLength": 600 },
+        "responsibilities": { "type": "string", "maxLength": 4000 },
+        "requirements": { "type": "string", "minLength": 5, "maxLength": 4000 },
+        "applicationMode": { "type": "string", "enum": ["internal", "external"] },
+        "externalApplyUrl": { "type": "string", "maxLength": 500 },
+        "requiresLicence": { "type": "boolean" },
+        "licenceDescription": { "type": "string", "maxLength": 200 },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string", "minLength": 2, "maxLength": 128 }
+      },
+      "required": [
+        "id",
+        "title",
+        "department",
+        "dealershipId",
+        "locationLabel",
+        "employmentType",
+        "closingDate",
+        "summary",
+        "responsibilities",
+        "requirements",
+        "applicationMode",
+        "externalApplyUrl",
+        "requiresLicence",
+        "licenceDescription",
+        "active",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "JobApplication": {
+      "title": "JobApplication",
+      "description": "PII-protected on-site career application with references to private uploaded documents (Resume, Qualifications, ID Copy, and optional Licence).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "jobId": { "type": "string", "minLength": 2, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$" },
+        "jobTitle": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "branchId": { "type": "string", "maxLength": 64 },
+        "fullName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "minLength": 5, "maxLength": 140 },
+        "phone": { "type": "string", "minLength": 7, "maxLength": 30 },
+        "idNumber": { "type": "string", "minLength": 5, "maxLength": 40 },
+        "cityOrSuburb": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "yearsExperience": { "type": "number" },
+        "highestQualification": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "driversLicenceCode": { "type": "string", "maxLength": 80 },
+        "coverNote": { "type": "string", "maxLength": 4000 },
+        "resumeDoc": { "type": "object" },
+        "qualificationDoc": { "type": "object" },
+        "idCopyDoc": { "type": "object" },
+        "licenceDoc": { "type": "object" },
+        "status": { "type": "string", "enum": ["new", "shortlisted", "interview", "rejected", "archived"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "jobId",
+        "jobTitle",
+        "branchId",
+        "fullName",
+        "email",
+        "phone",
+        "idNumber",
+        "cityOrSuburb",
+        "yearsExperience",
+        "highestQualification",
+        "driversLicenceCode",
+        "coverNote",
+        "resumeDoc",
+        "qualificationDoc",
+        "idCopyDoc",
+        "licenceDoc",
+        "status",
+        "createdAt"
       ]
     }
   },
@@ -349,13 +495,25 @@
       "schema": { "$ref": "#/entities/LeadSubmission" },
       "description": "PII-protected customer callback and booking submissions tagged with branch IDs."
     },
+    "/careersJobs/{jobId}": {
+      "schema": { "$ref": "#/entities/JobOpening" },
+      "description": "Dealership career opportunities supporting on-site applications or external application links."
+    },
+    "/jobApplications/{applicationId}": {
+      "schema": { "$ref": "#/entities/JobApplication" },
+      "description": "PII-protected on-site job applications and private document attachment metadata (admin read only)."
+    },
     "/admins/{uid}": {
       "schema": { "$ref": "#/entities/AdminUser" },
       "description": "Authorized dealership administrators."
     },
     "/staffUsers/{uid}": {
       "schema": { "$ref": "#/entities/StaffUser" },
-      "description": "Multi-role staff roster with role-based permissions and branch allocation."
+      "description": "Multi-role staff roster with role-based permissions, branch allocation, and IT-approved temporary escalation state."
+    },
+    "/itTickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/ItEscalationTicket" },
+      "description": "IT Agent role-escalation and technical support ticket queue managed by IT Managers and Group Administrators."
     }
   }
 }

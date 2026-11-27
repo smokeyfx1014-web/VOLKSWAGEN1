@@ -21,6 +21,7 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import {
+  Timestamp,
   collection,
   deleteDoc,
   doc,
@@ -34,6 +35,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import {
+  INITIAL_CMS_JOBS,
   INITIAL_CMS_NEWS,
   INITIAL_CMS_PROMOTIONS,
   INITIAL_CMS_VEHICLES,
@@ -44,6 +46,7 @@ import {
   formatZarPrice,
   normalizeAutoTraderJsonInput,
 } from '../lib/autotraderParser';
+import { isSpotterLead } from '../lib/leadFilters';
 import { isVideoMedia } from '../lib/mediaUpload';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
@@ -55,13 +58,19 @@ import {
   handleFirestoreError,
 } from '../lib/firebase';
 import {
+  ActiveStaffEscalation,
   AutoTraderBranchSyncSummary,
   AutoTraderSyncReport,
+  CmsJobApplication,
+  CmsJobOpening,
   CmsLeadSubmission,
   CmsNewsArticle,
   CmsPromotion,
   CmsVehicle,
   DealershipId,
+  EscalatableStaffRole,
+  ItEscalationTicket,
+  JobApplicationStatus,
   LeadSubmissionType,
   StaffRole,
   StaffUserProfile,
@@ -89,16 +98,46 @@ function sanitizeId(raw: string, prefix: string): string {
   return VALID_ID_RE.test(candidate) ? candidate : `${prefix}-${Date.now()}`;
 }
 
+export function parseFirestoreTimestampMs(val: unknown): number {
+  if (!val) return 0;
+  if (val instanceof Timestamp) return val.toMillis();
+  if (typeof val === 'object' && val !== null) {
+    const maybe = val as { toMillis?: () => number; seconds?: number };
+    if (typeof maybe.toMillis === 'function') return maybe.toMillis();
+    if (typeof maybe.seconds === 'number') return maybe.seconds * 1000;
+  }
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const parsed = Date.parse(val);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+const VALID_ESCALATABLE_SET = new Set<EscalatableStaffRole>([
+  'branch_admin',
+  'agent',
+  'parts',
+  'service',
+  'marketing',
+]);
+
 interface DealershipDataContextValue {
   todayISO: string;
   user: User | null;
   authReady: boolean;
   isAdmin: boolean;
+  isBranchAdmin: boolean;
+  isItManager: boolean;
+  isItAgent: boolean;
   isSalesAgent: boolean;
   isMarketing: boolean;
   isPartsExec: boolean;
   isServiceClerk: boolean;
+  baseStaffRole: StaffRole | null;
   staffRole: StaffRole | null;
+  activeEscalation: ActiveStaffEscalation | null;
+  escalationRemainingSeconds: number;
   canAccessPortal: boolean;
   allocatedBranchId: DealershipId | null;
   staffProfile: StaffUserProfile | null;
@@ -121,14 +160,18 @@ interface DealershipDataContextValue {
   activeEvents: CmsPromotion[];
   activeCompetitions: CmsPromotion[];
   activeNews: CmsNewsArticle[];
+  activeJobs: CmsJobOpening[];
 
   // Admin / Staff collections
   allVehicles: CmsVehicle[];
   allPromotions: CmsPromotion[];
   archivedPromotions: CmsPromotion[];
   allNews: CmsNewsArticle[];
+  allJobs: CmsJobOpening[];
+  jobApplications: CmsJobApplication[];
   leads: CmsLeadSubmission[];
   staffUsers: StaffUserProfile[];
+  itTickets: ItEscalationTicket[];
 
   // Admin & Staff mutations
   seedCatalogToFirestore: () => Promise<void>;
@@ -148,6 +191,13 @@ interface DealershipDataContextValue {
   deletePromotion: (id: string) => Promise<void>;
   saveNews: (article: Omit<CmsNewsArticle, 'updatedAt' | 'updatedBy'>) => Promise<void>;
   deleteNews: (id: string) => Promise<void>;
+  saveJobOpening: (job: Omit<CmsJobOpening, 'updatedAt' | 'updatedBy'>) => Promise<void>;
+  deleteJobOpening: (id: string) => Promise<void>;
+  submitJobApplication: (
+    application: Omit<CmsJobApplication, 'id' | 'status' | 'createdAt'>
+  ) => Promise<string>;
+  updateJobApplicationStatus: (id: string, status: JobApplicationStatus) => Promise<void>;
+  deleteJobApplication: (id: string) => Promise<void>;
   updateLeadStatus: (id: string, status: CmsLeadSubmission['status']) => Promise<void>;
   deleteLead: (id: string) => Promise<void>;
   createStaffUser: (payload: {
@@ -169,6 +219,21 @@ interface DealershipDataContextValue {
     }
   ) => Promise<void>;
   removeStaffUser: (uid: string) => Promise<void>;
+  createItTicket: (payload: {
+    targetDealershipId: DealershipId | null;
+    requestedRole: EscalatableStaffRole;
+    requestedDurationMinutes: number;
+    title: string;
+    reason: string;
+  }) => Promise<string>;
+  approveItTicketEscalation: (payload: {
+    ticketId: string;
+    durationMinutes: number;
+    reviewNote: string;
+  }) => Promise<void>;
+  resolveItTicketDirectly: (payload: { ticketId: string; reviewNote: string }) => Promise<void>;
+  rejectItTicket: (payload: { ticketId: string; reviewNote: string }) => Promise<void>;
+  revokeItTicketEscalation: (payload: { ticketId: string; reviewNote: string }) => Promise<void>;
   getBranchDependencies: (branchId: DealershipId) => {
     vehiclesCount: number;
     promotionsCount: number;
@@ -213,8 +278,12 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
   const [dbVehicles, setDbVehicles] = useState<CmsVehicle[] | null>(null);
   const [dbPromotions, setDbPromotions] = useState<CmsPromotion[] | null>(null);
   const [dbNews, setDbNews] = useState<CmsNewsArticle[] | null>(null);
+  const [dbJobs, setDbJobs] = useState<CmsJobOpening[] | null>(null);
+  const [jobApplications, setJobApplications] = useState<CmsJobApplication[]>([]);
   const [leads, setLeads] = useState<CmsLeadSubmission[]>([]);
   const [staffUsers, setStaffUsers] = useState<StaffUserProfile[]>([]);
+  const [itTickets, setItTickets] = useState<ItEscalationTicket[]>([]);
+  const [escalationNowMs, setEscalationNowMs] = useState<number>(() => Date.now());
 
   const autoArchivedIdsRef = useRef<Set<string>>(new Set());
   const autoSeededRef = useRef(false);
@@ -228,6 +297,16 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     }, 30000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // Tick every 5s when an IT Agent has an active temporary escalation for live countdown + automatic expiry drop-down
+  useEffect(() => {
+    if (!staffProfile?.activeEscalation) return;
+    setEscalationNowMs(Date.now());
+    const timer = window.setInterval(() => {
+      setEscalationNowMs(Date.now());
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [staffProfile?.activeEscalation]);
 
   // Track Firebase auth, admin roster & staff profile in real time
   useEffect(() => {
@@ -301,56 +380,92 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         (staffProfile?.role === 'admin' && staffProfile.active))
   );
 
-  const isSalesAgent = Boolean(
+  const isItManager = Boolean(
     user &&
       !isAdmin &&
-      staffProfile?.role === 'agent' &&
-      staffProfile.active &&
-      staffProfile.allocatedDealershipId
-  );
-
-  const isMarketing = Boolean(
-    user &&
-      !isAdmin &&
-      staffProfile?.role === 'marketing' &&
+      staffProfile?.role === 'it_manager' &&
       staffProfile.active
   );
 
-  const isPartsExec = Boolean(
+  const isItAgent = Boolean(
     user &&
       !isAdmin &&
-      staffProfile?.role === 'parts' &&
+      staffProfile?.role === 'it_agent' &&
       staffProfile.active &&
       staffProfile.allocatedDealershipId
   );
 
-  const isServiceClerk = Boolean(
-    user &&
-      !isAdmin &&
-      staffProfile?.role === 'service' &&
-      staffProfile.active &&
-      staffProfile.allocatedDealershipId
-  );
+  const activeEscalation: ActiveStaffEscalation | null = useMemo(() => {
+    if (!isItAgent || !staffProfile?.activeEscalation) return null;
+    const esc = staffProfile.activeEscalation;
+    if (!VALID_ESCALATABLE_SET.has(esc.grantedRole)) return null;
+    const expiresMs = parseFirestoreTimestampMs(esc.expiresAt);
+    if (expiresMs <= escalationNowMs) return null;
+    return esc;
+  }, [isItAgent, staffProfile, escalationNowMs]);
+
+  const escalationRemainingSeconds = useMemo(() => {
+    if (!activeEscalation) return 0;
+    const expiresMs = parseFirestoreTimestampMs(activeEscalation.expiresAt);
+    return Math.max(0, Math.floor((expiresMs - escalationNowMs) / 1000));
+  }, [activeEscalation, escalationNowMs]);
+
+  const baseStaffRole: StaffRole | null = isAdmin
+    ? 'admin'
+    : staffProfile?.active
+    ? staffProfile.role
+    : null;
 
   const staffRole: StaffRole | null = isAdmin
     ? 'admin'
-    : isSalesAgent
-    ? 'agent'
-    : isMarketing
-    ? 'marketing'
-    : isPartsExec
-    ? 'parts'
-    : isServiceClerk
-    ? 'service'
+    : activeEscalation
+    ? activeEscalation.grantedRole
+    : staffProfile?.active
+    ? staffProfile.role
     : null;
 
-  const canAccessPortal =
-    isAdmin || isSalesAgent || isMarketing || isPartsExec || isServiceClerk;
+  const allocatedBranchId: DealershipId | null = useMemo(() => {
+    if (isAdmin || isItManager) return null;
+    if (activeEscalation) {
+      if (activeEscalation.grantedRole === 'marketing') {
+        return activeEscalation.dealershipId ?? staffProfile?.allocatedDealershipId ?? null;
+      }
+      return activeEscalation.dealershipId ?? staffProfile?.allocatedDealershipId ?? null;
+    }
+    if (!staffProfile?.active) return null;
+    if (staffProfile.role === 'marketing') return null;
+    return staffProfile.allocatedDealershipId ?? null;
+  }, [isAdmin, isItManager, activeEscalation, staffProfile]);
 
-  const allocatedBranchId: DealershipId | null =
-    isSalesAgent || isPartsExec || isServiceClerk
-      ? staffProfile?.allocatedDealershipId ?? null
-      : null;
+  const isBranchAdmin = Boolean(
+    user && !isAdmin && !isItManager && staffRole === 'branch_admin' && allocatedBranchId
+  );
+
+  const isSalesAgent = Boolean(
+    user && !isAdmin && !isItManager && staffRole === 'agent' && allocatedBranchId
+  );
+
+  const isMarketing = Boolean(
+    user && !isAdmin && !isItManager && staffRole === 'marketing'
+  );
+
+  const isPartsExec = Boolean(
+    user && !isAdmin && !isItManager && staffRole === 'parts' && allocatedBranchId
+  );
+
+  const isServiceClerk = Boolean(
+    user && !isAdmin && !isItManager && staffRole === 'service' && allocatedBranchId
+  );
+
+  const canAccessPortal =
+    isAdmin ||
+    isItManager ||
+    isBranchAdmin ||
+    isItAgent ||
+    isSalesAgent ||
+    isMarketing ||
+    isPartsExec ||
+    isServiceClerk;
 
   const requiresPasswordSetup = Boolean(
     canAccessPortal && staffProfile?.mustChangePassword === true
@@ -359,11 +474,61 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     user && !isBootstrappedOrRosterAdmin && staffProfile && !staffProfile.active
   );
 
-  // Real-time Firestore listeners partitioned cleanly by verified staff role
+  // Real-time Firestore listeners partitioned cleanly by verified staff role (+ active temporary escalation)
   useEffect(() => {
     if (!authReady) return;
 
-    if (isAdmin) {
+    // 1. IT Tickets listener (independent of effective role so IT Agents keep ticket access even while escalated)
+    let unsubItTickets: () => void = () => {};
+    if (isAdmin || isItManager) {
+      unsubItTickets = onSnapshot(
+        collection(db, 'itTickets'),
+        (snap) => {
+          setItTickets(snap.docs.map((d) => d.data() as ItEscalationTicket));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'itTickets')
+      );
+    } else if ((isItAgent || isBranchAdmin) && (staffProfile?.allocatedDealershipId || allocatedBranchId)) {
+      const ticketBranchId = isItAgent
+        ? staffProfile?.allocatedDealershipId ?? allocatedBranchId!
+        : allocatedBranchId!;
+      let ownTickets: ItEscalationTicket[] = [];
+      let branchTickets: ItEscalationTicket[] = [];
+      const syncMergedTickets = () => {
+        const merged = new Map<string, ItEscalationTicket>();
+        for (const t of ownTickets) merged.set(t.id, t);
+        for (const t of branchTickets) merged.set(t.id, t);
+        setItTickets(Array.from(merged.values()));
+      };
+      const unsubOwn =
+        user && isItAgent
+          ? onSnapshot(
+              query(collection(db, 'itTickets'), where('requesterUid', '==', user.uid)),
+              (snap) => {
+                ownTickets = snap.docs.map((d) => d.data() as ItEscalationTicket);
+                syncMergedTickets();
+              },
+              (err) => handleFirestoreError(err, OperationType.LIST, 'itTickets/own')
+            )
+          : () => {};
+      const unsubBranch = onSnapshot(
+        query(collection(db, 'itTickets'), where('requesterBranchId', '==', ticketBranchId)),
+        (snap) => {
+          branchTickets = snap.docs.map((d) => d.data() as ItEscalationTicket);
+          syncMergedTickets();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `itTickets/branch-${ticketBranchId}`)
+      );
+      unsubItTickets = () => {
+        unsubOwn();
+        unsubBranch();
+      };
+    } else {
+      setItTickets([]);
+    }
+
+    // 2. Group Admin & Group IT Manager full-group listeners
+    if (isAdmin || isItManager) {
       const unsubVehicles = onSnapshot(
         collection(db, 'vehicles'),
         (snap) => {
@@ -406,60 +571,54 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         (err) => handleFirestoreError(err, OperationType.LIST, 'staffUsers')
       );
 
+      const unsubJobs = onSnapshot(
+        collection(db, 'careersJobs'),
+        (snap) => {
+          setDbJobs(snap.docs.map((d) => d.data() as CmsJobOpening));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'careersJobs')
+      );
+
+      const unsubApplications = onSnapshot(
+        collection(db, 'jobApplications'),
+        (snap) => {
+          setJobApplications(snap.docs.map((d) => d.data() as CmsJobApplication));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'jobApplications')
+      );
+
       return () => {
+        unsubItTickets();
         unsubVehicles();
         unsubPromotions();
         unsubNews();
         unsubLeads();
         unsubStaff();
+        unsubJobs();
+        unsubApplications();
       };
     }
 
-    setStaffUsers([]);
-
-    if (isMarketing) {
-      setLeads([]);
-      const unsubVehicles = onSnapshot(
-        query(collection(db, 'vehicles'), where('status', '==', 'available')),
-        (snap) => {
-          setDbVehicles(snap.docs.map((d) => d.data() as CmsVehicle));
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
-      );
-
-      const unsubPromotions = onSnapshot(
-        collection(db, 'promotions'),
-        (snap) => {
-          setDbPromotions(snap.docs.map((d) => d.data() as CmsPromotion));
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions')
-      );
-
-      const unsubNews = onSnapshot(
-        collection(db, 'news'),
-        (snap) => {
-          setDbNews(snap.docs.map((d) => d.data() as CmsNewsArticle));
-        },
-        (err) => handleFirestoreError(err, OperationType.LIST, 'news')
-      );
-
-      return () => {
-        unsubVehicles();
-        unsubPromotions();
-        unsubNews();
-      };
-    }
-
-    const unsubNews = onSnapshot(
-      query(collection(db, 'news'), where('archived', '==', false)),
+    const unsubNewsPublicOrMarketing = onSnapshot(
+      isMarketing
+        ? collection(db, 'news')
+        : query(collection(db, 'news'), where('archived', '==', false)),
       (snap) => {
         setDbNews(snap.docs.map((d) => d.data() as CmsNewsArticle));
       },
       (err) => handleFirestoreError(err, OperationType.LIST, 'news')
     );
 
-    if (isSalesAgent && allocatedBranchId) {
-      setLeads([]);
+    const unsubPublicJobs = onSnapshot(
+      query(collection(db, 'careersJobs'), where('active', '==', true)),
+      (snap) => {
+        setDbJobs(snap.docs.map((d) => d.data() as CmsJobOpening));
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'careersJobs')
+    );
+
+    // 3. Branch Admin / Dealer Principal (strictly branch-scoped across stock, promotions, leads, branch staff, applications)
+    if (isBranchAdmin && allocatedBranchId) {
       let publicVehicles: CmsVehicle[] = [];
       let branchVehicles: CmsVehicle[] = [];
       const syncMergedVehicles = () => {
@@ -519,15 +678,208 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
           handleFirestoreError(err, OperationType.LIST, `promotions/branch-${allocatedBranchId}`)
       );
 
+      let submittedLeads: CmsLeadSubmission[] = [];
+      let homeLeads: CmsLeadSubmission[] = [];
+      const syncMergedLeads = () => {
+        const merged = new Map<string, CmsLeadSubmission>();
+        for (const l of submittedLeads) merged.set(l.id, l);
+        for (const l of homeLeads) merged.set(l.id, l);
+        setLeads(Array.from(merged.values()));
+      };
+
+      const unsubSubmittedLeads = onSnapshot(
+        query(collection(db, 'leads'), where('submittedAtDealershipId', '==', allocatedBranchId)),
+        (snap) => {
+          submittedLeads = snap.docs.map((d) => d.data() as CmsLeadSubmission);
+          syncMergedLeads();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `leads/branch-submitted-${allocatedBranchId}`)
+      );
+
+      const unsubHomeLeads = onSnapshot(
+        query(collection(db, 'leads'), where('homeDealershipId', '==', allocatedBranchId)),
+        (snap) => {
+          homeLeads = snap.docs.map((d) => d.data() as CmsLeadSubmission);
+          syncMergedLeads();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `leads/branch-home-${allocatedBranchId}`)
+      );
+
+      const unsubBranchStaff = onSnapshot(
+        query(collection(db, 'staffUsers'), where('allocatedDealershipId', '==', allocatedBranchId)),
+        (snap) => {
+          const rows = snap.docs.map((d) => d.data() as StaffUserProfile);
+          rows.sort((a, b) => a.fullName.localeCompare(b.fullName));
+          setStaffUsers(rows);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `staffUsers/branch-${allocatedBranchId}`)
+      );
+
+      const unsubBranchApplications = onSnapshot(
+        query(collection(db, 'jobApplications'), where('branchId', '==', allocatedBranchId)),
+        (snap) => {
+          setJobApplications(snap.docs.map((d) => d.data() as CmsJobApplication));
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `jobApplications/branch-${allocatedBranchId}`)
+      );
+
       return () => {
+        unsubItTickets();
         unsubPublicVehicles();
         unsubBranchVehicles();
         unsubPublicPromos();
         unsubBranchPromos();
-        unsubNews();
+        unsubSubmittedLeads();
+        unsubHomeLeads();
+        unsubBranchStaff();
+        unsubBranchApplications();
+        unsubNewsPublicOrMarketing();
+        unsubPublicJobs();
       };
     }
 
+    setStaffUsers([]);
+    setJobApplications([]);
+
+    // 4. Marketing Coordinator (group-wide Promotions & News)
+    if (isMarketing) {
+      setLeads([]);
+      const unsubVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('status', '==', 'available')),
+        (snap) => {
+          setDbVehicles(snap.docs.map((d) => d.data() as CmsVehicle));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles')
+      );
+
+      const unsubPromotions = onSnapshot(
+        collection(db, 'promotions'),
+        (snap) => {
+          setDbPromotions(snap.docs.map((d) => d.data() as CmsPromotion));
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions')
+      );
+
+      return () => {
+        unsubItTickets();
+        unsubVehicles();
+        unsubPromotions();
+        unsubNewsPublicOrMarketing();
+        unsubPublicJobs();
+      };
+    }
+
+    // 5. Car Sales Executive (Branch Stock + Branch Specials/Events + Branch Spotters Leads)
+    if (isSalesAgent && allocatedBranchId) {
+      let publicVehicles: CmsVehicle[] = [];
+      let branchVehicles: CmsVehicle[] = [];
+      const syncMergedVehicles = () => {
+        const merged = new Map<string, CmsVehicle>();
+        for (const v of publicVehicles) merged.set(v.id, v);
+        for (const v of branchVehicles) merged.set(v.id, v);
+        setDbVehicles(Array.from(merged.values()));
+      };
+
+      const unsubPublicVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('status', '==', 'available')),
+        (snap) => {
+          publicVehicles = snap.docs.map((d) => d.data() as CmsVehicle);
+          syncMergedVehicles();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles/public')
+      );
+
+      const unsubBranchVehicles = onSnapshot(
+        query(collection(db, 'vehicles'), where('homeDealershipId', '==', allocatedBranchId)),
+        (snap) => {
+          branchVehicles = snap.docs.map((d) => d.data() as CmsVehicle);
+          syncMergedVehicles();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, `vehicles/branch-${allocatedBranchId}`)
+      );
+
+      let publicPromos: CmsPromotion[] = [];
+      let branchPromos: CmsPromotion[] = [];
+      const syncMergedPromos = () => {
+        const merged = new Map<string, CmsPromotion>();
+        for (const p of publicPromos) merged.set(p.id, p);
+        for (const p of branchPromos) merged.set(p.id, p);
+        setDbPromotions(Array.from(merged.values()));
+      };
+
+      const unsubPublicPromos = onSnapshot(
+        query(collection(db, 'promotions'), where('active', '==', true)),
+        (snap) => {
+          publicPromos = snap.docs.map((d) => d.data() as CmsPromotion);
+          syncMergedPromos();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'promotions/public')
+      );
+
+      const unsubBranchPromos = onSnapshot(
+        query(
+          collection(db, 'promotions'),
+          where('scope', '==', 'BRANCH'),
+          where('dealershipId', '==', allocatedBranchId)
+        ),
+        (snap) => {
+          branchPromos = snap.docs.map((d) => d.data() as CmsPromotion);
+          syncMergedPromos();
+        },
+        (err) =>
+          handleFirestoreError(err, OperationType.LIST, `promotions/branch-${allocatedBranchId}`)
+      );
+
+      let submittedSpotters: CmsLeadSubmission[] = [];
+      let homeSpotters: CmsLeadSubmission[] = [];
+      const syncMergedSpotters = () => {
+        const merged = new Map<string, CmsLeadSubmission>();
+        for (const l of submittedSpotters) merged.set(l.id, l);
+        for (const l of homeSpotters) merged.set(l.id, l);
+        setLeads(Array.from(merged.values()));
+      };
+
+      const unsubSubmittedSpotters = onSnapshot(
+        query(
+          collection(db, 'leads'),
+          where('leadType', 'in', ['spotter', 'competition-entry']),
+          where('submittedAtDealershipId', '==', allocatedBranchId)
+        ),
+        (snap) => {
+          submittedSpotters = snap.docs.map((d) => d.data() as CmsLeadSubmission);
+          syncMergedSpotters();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'leads/spotter-submitted')
+      );
+
+      const unsubHomeSpotters = onSnapshot(
+        query(
+          collection(db, 'leads'),
+          where('leadType', 'in', ['spotter', 'competition-entry']),
+          where('homeDealershipId', '==', allocatedBranchId)
+        ),
+        (snap) => {
+          homeSpotters = snap.docs.map((d) => d.data() as CmsLeadSubmission);
+          syncMergedSpotters();
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'leads/spotter-home')
+      );
+
+      return () => {
+        unsubItTickets();
+        unsubPublicVehicles();
+        unsubBranchVehicles();
+        unsubPublicPromos();
+        unsubBranchPromos();
+        unsubSubmittedSpotters();
+        unsubHomeSpotters();
+        unsubNewsPublicOrMarketing();
+        unsubPublicJobs();
+      };
+    }
+
+    // 6. Parts Agent & Service Booking Agent (Branch Dept Leads + Dept Specials)
     if ((isPartsExec || isServiceClerk) && allocatedBranchId) {
       const deptLeadType: LeadSubmissionType = isPartsExec ? 'parts' : 'service';
 
@@ -609,15 +961,18 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       );
 
       return () => {
+        unsubItTickets();
         unsubVehicles();
         unsubPublicPromos();
         unsubDeptPromos();
         unsubSubmittedLeads();
         unsubHomeLeads();
-        unsubNews();
+        unsubNewsPublicOrMarketing();
+        unsubPublicJobs();
       };
     }
 
+    // 7. Public visitors & non-escalated IT Agents (base view + IT Tickets handled above)
     setLeads([]);
 
     const unsubVehicles = onSnapshot(
@@ -637,18 +992,25 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     );
 
     return () => {
+      unsubItTickets();
       unsubVehicles();
       unsubPromotions();
-      unsubNews();
+      unsubNewsPublicOrMarketing();
+      unsubPublicJobs();
     };
   }, [
     authReady,
+    user,
     isAdmin,
+    isItManager,
+    isBranchAdmin,
+    isItAgent,
     isSalesAgent,
     isMarketing,
     isPartsExec,
     isServiceClerk,
     allocatedBranchId,
+    staffProfile?.allocatedDealershipId,
   ]);
 
   const seedCatalogToFirestore = useCallback(async () => {
@@ -674,6 +1036,13 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     for (const n of INITIAL_CMS_NEWS) {
       batch.set(doc(db, 'news', n.id), {
         ...n,
+        updatedAt: serverTimestamp(),
+        updatedBy: uid,
+      });
+    }
+    for (const j of INITIAL_CMS_JOBS) {
+      batch.set(doc(db, 'careersJobs', j.id), {
+        ...j,
         updatedAt: serverTimestamp(),
         updatedBy: uid,
       });
@@ -733,9 +1102,30 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     );
   }, [isAdmin, user, dbVehicles]);
 
-  // Auto-archive expired promotions when admin or marketing views catalog
+  // One-time seed of the Spotter Commission promotion for already-initialized databases
   useEffect(() => {
-    if ((!isAdmin && !isMarketing) || !user || !dbPromotions) return;
+    if (!isAdmin || !user || !dbPromotions || dbPromotions.length === 0) return;
+    if (typeof window !== 'undefined' && window.localStorage.getItem('vw_spotter_seed_v1') === '1') {
+      return;
+    }
+    const spotterPromo = INITIAL_CMS_PROMOTIONS.find((p) => p.id === 'promo-master-spotter-reward');
+    if (!spotterPromo) return;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('vw_spotter_seed_v1', '1');
+    }
+    if (dbPromotions.some((p) => p.id === spotterPromo.id)) return;
+    void setDoc(doc(db, 'promotions', spotterPromo.id), {
+      ...spotterPromo,
+      updatedAt: serverTimestamp(),
+      updatedBy: user.uid,
+    }).catch((err) =>
+      handleFirestoreError(err, OperationType.WRITE, `promotions/${spotterPromo.id}`)
+    );
+  }, [isAdmin, user, dbPromotions]);
+
+  // Auto-archive expired promotions when admin, IT manager, or marketing views catalog
+  useEffect(() => {
+    if ((!isAdmin && !isItManager && !isMarketing) || !user || !dbPromotions) return;
     const expiredActive = dbPromotions.filter((p) => p.active && p.validUntil < todayISO);
     for (const p of expiredActive) {
       const key = `promo:${p.id}:${p.validUntil}`;
@@ -748,7 +1138,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         updatedBy: user.uid,
       }).catch((err) => handleFirestoreError(err, OperationType.UPDATE, `promotions/${p.id}`));
     }
-  }, [isAdmin, isMarketing, user, dbPromotions, todayISO]);
+  }, [isAdmin, isItManager, isMarketing, user, dbPromotions, todayISO]);
 
   const loadingCatalog = dbVehicles === null || dbPromotions === null || dbNews === null;
 
@@ -781,6 +1171,11 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     if (dbNews && dbNews.length > 0) return dbNews;
     return INITIAL_CMS_NEWS;
   }, [dbNews]);
+
+  const allJobs: CmsJobOpening[] = useMemo(() => {
+    if (dbJobs && dbJobs.length > 0) return dbJobs;
+    return INITIAL_CMS_JOBS;
+  }, [dbJobs]);
 
   // Public filtered vehicles: all status == 'available' across all 3 sites
   const activeVehicles = useMemo(
@@ -829,6 +1224,14 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
   const activeNews = useMemo(
     () => allNews.filter((n) => !n.archived),
     [allNews]
+  );
+
+  const activeJobs = useMemo(
+    () =>
+      allJobs
+        .filter((j) => j.active && (!j.closingDate || j.closingDate >= todayISO))
+        .sort((a, b) => (a.closingDate || '9999-12-31').localeCompare(b.closingDate || '9999-12-31')),
+    [allJobs, todayISO]
   );
 
   const signInAdmin = useCallback(async () => {
@@ -952,11 +1355,23 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     async (
       vehicle: Omit<CmsVehicle, 'createdAt' | 'updatedAt' | 'updatedBy'> & { createdAt?: unknown }
     ) => {
-      if (!user || (!isAdmin && !isSalesAgent)) {
-        throw new Error('Only Administrators and Car Sales Agents can manage vehicles.');
+      const hasFullStockWrite = isAdmin || isItManager;
+      if (!user || (!hasFullStockWrite && !isBranchAdmin && !isSalesAgent)) {
+        throw new Error(
+          'Group Admin, IT Manager, Branch Admin, or Car Sales Executive privileges are required to manage vehicles.'
+        );
       }
       const id = sanitizeId(vehicle.id, 'veh');
       const existingVehicle = (dbVehicles ?? []).find((v) => v.id === id);
+
+      if (isBranchAdmin) {
+        if (!allocatedBranchId) {
+          throw new Error('No allocated dealership found for your Branch Admin profile.');
+        }
+        if (existingVehicle && existingVehicle.homeDealershipId !== allocatedBranchId) {
+          throw new Error('Branch Admins can only edit vehicles belonging to their allocated branch.');
+        }
+      }
 
       if (isSalesAgent) {
         if (!allocatedBranchId) {
@@ -969,7 +1384,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
             existingVehicle.id.startsWith('at_'))
         ) {
           throw new Error(
-            'Car Sales Agents can only edit manually added vehicles for their allocated dealership.'
+            'Car Sales Executives can only edit manually added vehicles for their allocated dealership.'
           );
         }
       }
@@ -983,9 +1398,8 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         throw new Error('At least one valid vehicle image URL is required.');
       }
 
-      const targetHomeBranchId: DealershipId = isSalesAgent
-        ? allocatedBranchId!
-        : vehicle.homeDealershipId;
+      const targetHomeBranchId: DealershipId =
+        isBranchAdmin || isSalesAgent ? allocatedBranchId! : vehicle.homeDealershipId;
       const effectiveSource = isSalesAgent
         ? 'manual'
         : vehicle.source === 'autotrader'
@@ -1045,13 +1459,20 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `vehicles/${id}`);
       }
     },
-    [user, isAdmin, isSalesAgent, allocatedBranchId, dbVehicles]
+    [user, isAdmin, isItManager, isBranchAdmin, isSalesAgent, allocatedBranchId, dbVehicles]
   );
 
   const deleteVehicle = useCallback(
     async (id: string) => {
-      if (!user || (!isAdmin && !isSalesAgent)) {
-        throw new Error('Only Administrators and Car Sales Agents can remove vehicles.');
+      const hasFullStockWrite = isAdmin || isItManager;
+      if (!user || (!hasFullStockWrite && !isBranchAdmin && !isSalesAgent)) {
+        throw new Error('Authorized staff privileges are required to remove vehicles.');
+      }
+      if (isBranchAdmin) {
+        const target = (dbVehicles ?? []).find((v) => v.id === id);
+        if (!target || target.homeDealershipId !== allocatedBranchId) {
+          throw new Error('Branch Admins can only remove vehicles belonging to their allocated branch.');
+        }
       }
       if (isSalesAgent) {
         const target = (dbVehicles ?? []).find((v) => v.id === id);
@@ -1062,7 +1483,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
           target.id.startsWith('at_')
         ) {
           throw new Error(
-            'Car Sales Agents can only remove manual vehicles belonging to their allocated dealership.'
+            'Car Sales Executives can only remove manual vehicles belonging to their allocated dealership.'
           );
         }
       }
@@ -1072,11 +1493,13 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.DELETE, `vehicles/${id}`);
       }
     },
-    [user, isAdmin, isSalesAgent, allocatedBranchId, dbVehicles]
+    [user, isAdmin, isItManager, isBranchAdmin, isSalesAgent, allocatedBranchId, dbVehicles]
   );
 
   const clearManualVehicles = useCallback(async (): Promise<number> => {
-    if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+    if (!user || (!isAdmin && !isItManager)) {
+      throw new Error('Group Admin or IT Manager sign-in required.');
+    }
     const manualDocs = (dbVehicles ?? []).filter(
       (v) => v.source !== 'autotrader' && !v.id.startsWith('at_')
     );
@@ -1095,7 +1518,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       }
     }
     return manualDocs.length;
-  }, [user, isAdmin, dbVehicles]);
+  }, [user, isAdmin, isItManager, dbVehicles]);
 
   const reconcileAutoTraderBranches = useCallback(
     async (
@@ -1112,7 +1535,9 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       reconcileMissing: boolean,
       mode: 'decodo' | 'json-import'
     ): Promise<AutoTraderSyncReport> => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('Group Admin or IT Manager sign-in required.');
+      }
 
       const existingMap = new Map<string, CmsVehicle>();
       for (const existingVehicle of dbVehicles ?? []) {
@@ -1275,11 +1700,13 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         branches: summaries,
       };
     },
-    [user, isAdmin, dbVehicles]
+    [user, isAdmin, isItManager, dbVehicles]
   );
 
   const syncAutoTraderFromDecodo = useCallback(async (): Promise<AutoTraderSyncReport> => {
-    if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+    if (!user || (!isAdmin && !isItManager)) {
+      throw new Error('Group Admin or IT Manager sign-in required.');
+    }
     const idToken = await user.getIdToken();
 
     const response = await fetch('/api/autotrader-scrape', {
@@ -1325,7 +1752,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     }
 
     return reconcileAutoTraderBranches(payload.branches ?? [], true, 'decodo');
-  }, [user, isAdmin, allDealerships, reconcileAutoTraderBranches]);
+  }, [user, isAdmin, isItManager, allDealerships, reconcileAutoTraderBranches]);
 
   const importAutoTraderJson = useCallback(
     async (
@@ -1333,7 +1760,9 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       targetBranchId: DealershipId,
       reconcileMissing: boolean
     ): Promise<AutoTraderSyncReport> => {
-      if (!user || !isAdmin) throw new Error('Admin sign-in required.');
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('Group Admin or IT Manager sign-in required.');
+      }
       const targetBranch = dealershipsById[targetBranchId];
       const { vehicles, errors } = normalizeAutoTraderJsonInput(
         rawInput,
@@ -1365,12 +1794,15 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
 
       return reconcileAutoTraderBranches(payloads, reconcileMissing, 'json-import');
     },
-    [user, isAdmin, dealershipsById, reconcileAutoTraderBranches]
+    [user, isAdmin, isItManager, dealershipsById, reconcileAutoTraderBranches]
   );
 
   const canManagePromotion = useCallback(
     (promo: Pick<CmsPromotion, 'scope' | 'dealershipId' | 'type'>) => {
-      if (isAdmin || isMarketing) return true;
+      if (isAdmin || isItManager || isMarketing) return true;
+      if (isBranchAdmin && allocatedBranchId) {
+        return promo.scope === 'BRANCH' && promo.dealershipId === allocatedBranchId;
+      }
       if (isSalesAgent && allocatedBranchId) {
         return (
           promo.scope === 'BRANCH' &&
@@ -1387,51 +1819,44 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       }
       return false;
     },
-    [isAdmin, isMarketing, isSalesAgent, isPartsExec, isServiceClerk, allocatedBranchId]
+    [isAdmin, isItManager, isMarketing, isBranchAdmin, isSalesAgent, isPartsExec, isServiceClerk, allocatedBranchId]
   );
 
   const savePromotion = useCallback(
     async (promo: Omit<CmsPromotion, 'updatedAt' | 'updatedBy'>) => {
-      if (!user || !canAccessPortal) throw new Error('Authorized staff sign-in required.');
+      const canPublishPromos =
+        isAdmin || isItManager || isMarketing || isBranchAdmin || isSalesAgent || isPartsExec || isServiceClerk;
+      if (!user || !canPublishPromos) {
+        throw new Error('Your current role cannot publish promotions.');
+      }
       if (!ISO_DATE_RE.test(promo.validUntil)) {
         throw new Error('Valid Until date must use YYYY-MM-DD format.');
       }
       const id = sanitizeId(promo.id, 'promo');
       const isExpired = promo.validUntil < todayISO;
       const isDeptSpecialist = isPartsExec || isServiceClerk;
+      const isBranchLocked = isBranchAdmin || isSalesAgent || isDeptSpecialist;
 
-      if (isSalesAgent) {
-        if (!allocatedBranchId) {
-          throw new Error('No allocated dealership found for your agent profile.');
-        }
-        if (promo.type === 'competition') {
-          throw new Error('Car Sales Agents can only publish Specials and Events for their branch.');
-        }
+      if (isBranchLocked && !allocatedBranchId) {
+        throw new Error('No allocated dealership found for your staff profile.');
+      }
+      if (isSalesAgent && promo.type === 'competition') {
+        throw new Error('Car Sales Executives can only publish Specials and Events for their branch.');
+      }
+      if (isDeptSpecialist && promo.type !== 'special') {
+        throw new Error('Department staff can only publish branch-scoped Specials.');
       }
 
-      if (isDeptSpecialist) {
-        if (!allocatedBranchId) {
-          throw new Error('No allocated dealership found for your staff profile.');
-        }
-        if (promo.type !== 'special') {
-          throw new Error(
-            'Department staff can only publish branch-scoped Specials.'
-          );
-        }
-      }
-
-      const scope =
-        isSalesAgent || isDeptSpecialist
-          ? 'BRANCH'
-          : promo.scope === 'BRANCH'
-          ? 'BRANCH'
-          : 'MASTER';
-      const dealershipId =
-        isSalesAgent || isDeptSpecialist
-          ? allocatedBranchId!
-          : scope === 'MASTER'
-          ? null
-          : promo.dealershipId ?? allDealerships[0]?.id ?? '1';
+      const scope = isBranchLocked
+        ? 'BRANCH'
+        : promo.scope === 'BRANCH'
+        ? 'BRANCH'
+        : 'MASTER';
+      const dealershipId = isBranchLocked
+        ? allocatedBranchId!
+        : scope === 'MASTER'
+        ? null
+        : promo.dealershipId ?? allDealerships[0]?.id ?? '1';
       const promoType = isDeptSpecialist
         ? 'special'
         : isSalesAgent && promo.type === 'competition'
@@ -1470,7 +1895,10 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     },
     [
       user,
-      canAccessPortal,
+      isAdmin,
+      isItManager,
+      isMarketing,
+      isBranchAdmin,
       isSalesAgent,
       isPartsExec,
       isServiceClerk,
@@ -1547,8 +1975,8 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
 
   const saveNews = useCallback(
     async (article: Omit<CmsNewsArticle, 'updatedAt' | 'updatedBy'>) => {
-      if (!user || (!isAdmin && !isMarketing)) {
-        throw new Error('Administrator or Marketing privileges are required.');
+      if (!user || (!isAdmin && !isItManager && !isMarketing)) {
+        throw new Error('Group Admin, IT Manager, or Marketing privileges are required.');
       }
       const id = sanitizeId(article.id, 'news');
       const payload = {
@@ -1571,13 +1999,13 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.WRITE, `news/${id}`);
       }
     },
-    [user, isAdmin, isMarketing]
+    [user, isAdmin, isItManager, isMarketing]
   );
 
   const deleteNews = useCallback(
     async (id: string) => {
-      if (!user || (!isAdmin && !isMarketing)) {
-        throw new Error('Administrator or Marketing privileges are required.');
+      if (!user || (!isAdmin && !isItManager && !isMarketing)) {
+        throw new Error('Group Admin, IT Manager, or Marketing privileges are required.');
       }
       try {
         await deleteDoc(doc(db, 'news', id));
@@ -1585,29 +2013,38 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.DELETE, `news/${id}`);
       }
     },
-    [user, isAdmin, isMarketing]
+    [user, isAdmin, isItManager, isMarketing]
   );
 
   const updateLeadStatus = useCallback(
     async (id: string, status: CmsLeadSubmission['status']) => {
       if (!user) throw new Error('Authenticated sign-in required.');
       const target = leads.find((l) => l.id === id);
-      const canPartsUpdate = Boolean(
-        isPartsExec &&
-          allocatedBranchId &&
-          target?.leadType === 'parts' &&
+      const belongsToBranch = Boolean(
+        allocatedBranchId &&
+          target &&
           (target.submittedAtDealershipId === allocatedBranchId ||
             target.homeDealershipId === allocatedBranchId)
+      );
+      const canBranchAdminUpdate = Boolean(isBranchAdmin && belongsToBranch);
+      const canPartsUpdate = Boolean(
+        isPartsExec && belongsToBranch && target?.leadType === 'parts'
       );
       const canServiceUpdate = Boolean(
-        isServiceClerk &&
-          allocatedBranchId &&
-          target?.leadType === 'service' &&
-          (target.submittedAtDealershipId === allocatedBranchId ||
-            target.homeDealershipId === allocatedBranchId)
+        isServiceClerk && belongsToBranch && target?.leadType === 'service'
+      );
+      const canSpotterUpdate = Boolean(
+        isSalesAgent && belongsToBranch && target && isSpotterLead(target)
       );
 
-      if (!isAdmin && !canPartsUpdate && !canServiceUpdate) {
+      if (
+        !isAdmin &&
+        !isItManager &&
+        !canBranchAdminUpdate &&
+        !canPartsUpdate &&
+        !canServiceUpdate &&
+        !canSpotterUpdate
+      ) {
         throw new Error('You do not have permission to update this customer enquiry.');
       }
       try {
@@ -1616,16 +2053,193 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         handleFirestoreError(err, OperationType.UPDATE, `leads/${id}`);
       }
     },
-    [user, isAdmin, isPartsExec, isServiceClerk, allocatedBranchId, leads]
+    [
+      user,
+      isAdmin,
+      isItManager,
+      isBranchAdmin,
+      isPartsExec,
+      isServiceClerk,
+      isSalesAgent,
+      allocatedBranchId,
+      leads,
+    ]
   );
 
   const deleteLead = useCallback(
     async (id: string) => {
-      if (!user || !isAdmin) throw new Error('Only Administrators can delete lead records.');
+      if (!user || !isAdmin) throw new Error('Only Group Administrators can delete lead records.');
       try {
         await deleteDoc(doc(db, 'leads', id));
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `leads/${id}`);
+      }
+    },
+    [user, isAdmin]
+  );
+
+  const saveJobOpening = useCallback(
+    async (job: Omit<CmsJobOpening, 'updatedAt' | 'updatedBy'>) => {
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('Only Group Administrators or IT Managers can create or edit job openings.');
+      }
+      if (!ISO_DATE_RE.test(job.closingDate)) {
+        throw new Error('Closing date must use YYYY-MM-DD format.');
+      }
+      const isExternal = job.applicationMode === 'external';
+      const cleanedExternalUrl = (job.externalApplyUrl || '').trim().slice(0, 500);
+      if (isExternal && !/^https?:\/\//i.test(cleanedExternalUrl)) {
+        throw new Error('External application links must start with https:// or http://.');
+      }
+      const id = sanitizeId(job.id, 'job');
+      const title = job.title.trim().slice(0, 160);
+      const department = job.department.trim().slice(0, 80);
+      const locationLabel = job.locationLabel.trim().slice(0, 140);
+      const summary = job.summary.trim().slice(0, 600);
+      const requirements = job.requirements.trim().slice(0, 4000);
+      if (title.length < 3) throw new Error('Job title must be at least 3 characters.');
+      if (summary.length < 10) throw new Error('Role summary must be at least 10 characters.');
+      if (requirements.length < 5) throw new Error('Requirements must be at least 5 characters.');
+
+      const payload = {
+        id,
+        title,
+        department,
+        dealershipId: job.dealershipId ?? null,
+        locationLabel,
+        employmentType: job.employmentType,
+        summary,
+        requirements,
+        responsibilities: (job.responsibilities || '').trim().slice(0, 4000),
+        applicationMode: isExternal ? 'external' : 'internal',
+        externalApplyUrl: isExternal ? cleanedExternalUrl : '',
+        requiresLicence: Boolean(job.requiresLicence),
+        licenceDescription: (job.licenceDescription || '').trim().slice(0, 200),
+        closingDate: job.closingDate,
+        active: Boolean(job.active),
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      };
+      try {
+        await setDoc(doc(db, 'careersJobs', id), payload);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `careersJobs/${id}`);
+      }
+    },
+    [user, isAdmin, isItManager]
+  );
+
+  const deleteJobOpening = useCallback(
+    async (id: string) => {
+      if (!user || !isAdmin) {
+        throw new Error('Only Group Administrators can delete job openings.');
+      }
+      try {
+        await deleteDoc(doc(db, 'careersJobs', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `careersJobs/${id}`);
+      }
+    },
+    [user, isAdmin]
+  );
+
+  const submitJobApplication = useCallback(
+    async (application: Omit<CmsJobApplication, 'id' | 'status' | 'createdAt'>): Promise<string> => {
+      const id = sanitizeId(
+        `app-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        'app'
+      );
+      const payload = {
+        id,
+        jobId: application.jobId.trim().slice(0, 128),
+        jobTitle: application.jobTitle.trim().slice(0, 160),
+        branchId: application.branchId ?? null,
+        fullName: application.fullName.trim().slice(0, 120),
+        email: application.email.trim().slice(0, 140),
+        phone: application.phone.trim().slice(0, 30),
+        idNumber: application.idNumber.trim().slice(0, 40),
+        cityOrSuburb: application.cityOrSuburb.trim().slice(0, 120),
+        yearsExperience: Math.max(0, Math.min(60, Number(application.yearsExperience || 0))),
+        highestQualification: application.highestQualification.trim().slice(0, 140),
+        driversLicenceCode: (application.driversLicenceCode || '').trim().slice(0, 80),
+        coverNote: (application.coverNote || '').trim().slice(0, 4000),
+        resumeDoc: application.resumeDoc,
+        qualificationDoc: application.qualificationDoc,
+        idCopyDoc: application.idCopyDoc,
+        licenceDoc: application.licenceDoc ?? null,
+        status: 'new',
+        createdAt: serverTimestamp(),
+      };
+
+      try {
+        await setDoc(doc(db, 'jobApplications', id), payload);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `jobApplications/${id}`);
+        throw new Error('Unable to submit your job application right now. Please try again.');
+      }
+
+      const targetBranchId: DealershipId = application.branchId ?? activeDealershipId;
+
+      void fetch('/api/notify-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          leadId: id,
+          leadType: 'job-application',
+          fullName: payload.fullName,
+          phone: payload.phone,
+          email: payload.email,
+          subject: `Job Application: ${payload.jobTitle}`,
+          details: [
+            `Position: ${payload.jobTitle}`,
+            `Applicant: ${payload.fullName} (${payload.cityOrSuburb})`,
+            `Qualification: ${payload.highestQualification}`,
+            `Experience: ${payload.yearsExperience} year(s)`,
+            payload.driversLicenceCode ? `Licence Code: ${payload.driversLicenceCode}` : '',
+            `Documents Uploaded: CV (${application.resumeDoc.fileName}), Qualifications (${application.qualificationDoc.fileName}), ID Copy (${application.idCopyDoc.fileName})${
+              application.licenceDoc ? `, Licence (${application.licenceDoc.fileName})` : ''
+            }`,
+            'Review uploaded documents inside the Dealership Admin CMS Careers tab.',
+          ]
+            .filter(Boolean)
+            .join('\n'),
+          submittedAtDealershipId: targetBranchId,
+          homeDealershipId: targetBranchId,
+        }),
+      }).catch(() => {});
+
+      return id;
+    },
+    [activeDealershipId]
+  );
+
+  const updateJobApplicationStatus = useCallback(
+    async (id: string, status: JobApplicationStatus) => {
+      const target = jobApplications.find((a) => a.id === id);
+      const canBranchUpdate = Boolean(
+        isBranchAdmin && allocatedBranchId && target?.branchId === allocatedBranchId
+      );
+      if (!user || (!isAdmin && !isItManager && !canBranchUpdate)) {
+        throw new Error('Group Admin, IT Manager, or Branch Admin privileges are required to update job application status.');
+      }
+      try {
+        await updateDoc(doc(db, 'jobApplications', id), { status });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `jobApplications/${id}`);
+      }
+    },
+    [user, isAdmin, isItManager, isBranchAdmin, allocatedBranchId, jobApplications]
+  );
+
+  const deleteJobApplication = useCallback(
+    async (id: string) => {
+      if (!user || !isAdmin) {
+        throw new Error('Only Group Administrators can delete job applications.');
+      }
+      try {
+        await deleteDoc(doc(db, 'jobApplications', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `jobApplications/${id}`);
       }
     },
     [user, isAdmin]
@@ -1695,9 +2309,13 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       allocatedDealershipId: DealershipId | null;
       defaultPassword: string;
     }): Promise<StaffUserProfile> => {
-      if (!user || !isAdmin) {
-        throw new Error('Only Administrators can add staff users.');
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('Group Admin or IT Manager privileges are required to add staff users.');
       }
+      if (isItManager && (input.role === 'admin' || input.role === 'it_manager')) {
+        throw new Error('IT Managers cannot create Group Admin or IT Manager accounts.');
+      }
+
       const fullName = input.fullName.trim().slice(0, 120);
       const phone = input.phone.trim().slice(0, 30);
       const email = input.email.trim().toLowerCase().slice(0, 140);
@@ -1716,13 +2334,20 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         throw new Error('Default password must be at least 8 characters long.');
       }
       const isBranchScopedRole =
-        input.role === 'agent' || input.role === 'parts' || input.role === 'service';
+        input.role === 'branch_admin' ||
+        input.role === 'it_agent' ||
+        input.role === 'agent' ||
+        input.role === 'parts' ||
+        input.role === 'service';
       const roleLabelMap: Record<StaffRole, string> = {
-        admin: 'Administrator',
-        agent: 'Car Sales Agent',
+        admin: 'Group Administrator',
+        branch_admin: 'Branch Admin / Dealer Principal',
+        it_manager: 'Group IT Manager',
+        it_agent: 'Branch IT Agent',
+        agent: 'Car Sales Executive',
         marketing: 'Marketing Coordinator',
-        parts: 'Parts Sales Executive',
-        service: 'Service Booking Clerk',
+        parts: 'Parts Agent',
+        service: 'Service Booking Agent',
       };
       if (isBranchScopedRole && !input.allocatedDealershipId) {
         throw new Error(
@@ -1772,6 +2397,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         allocatedDealershipId: assignedBranch,
         mustChangePassword: true,
         active: true,
+        activeEscalation: null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: user.uid,
@@ -1801,11 +2427,12 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         allocatedDealershipId: assignedBranch,
         mustChangePassword: true,
         active: true,
+        activeEscalation: null,
         createdBy: user.uid,
         updatedBy: user.uid,
       };
     },
-    [user, isAdmin, allDealerships]
+    [user, isAdmin, isItManager, allDealerships]
   );
 
   const updateStaffUser = useCallback(
@@ -1819,12 +2446,21 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         active: boolean;
       }
     ) => {
-      if (!user || !isAdmin) {
-        throw new Error('Only Administrators can update staff user permissions.');
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('Group Admin or IT Manager privileges are required to update staff permissions.');
       }
       const existingStaff = staffUsers.find((s) => s.uid === uid);
       if (!existingStaff) {
         throw new Error('Staff profile not found.');
+      }
+      if (
+        isItManager &&
+        (existingStaff.role === 'admin' ||
+          existingStaff.role === 'it_manager' ||
+          updates.role === 'admin' ||
+          updates.role === 'it_manager')
+      ) {
+        throw new Error('IT Managers cannot modify or assign Group Admin or IT Manager roles.');
       }
 
       const fullName = updates.fullName.trim().slice(0, 120);
@@ -1836,17 +2472,23 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
         throw new Error('Phone number must be at least 7 characters.');
       }
       const isBranchScopedRole =
-        updates.role === 'agent' || updates.role === 'parts' || updates.role === 'service';
+        updates.role === 'branch_admin' ||
+        updates.role === 'it_agent' ||
+        updates.role === 'agent' ||
+        updates.role === 'parts' ||
+        updates.role === 'service';
       if (isBranchScopedRole && !updates.allocatedDealershipId) {
         throw new Error('Branch-scoped staff roles must be assigned to a dealership.');
       }
-      if (uid === user.uid && (!updates.active || updates.role !== 'admin')) {
-        throw new Error('You cannot suspend or demote your own active Administrator session.');
+      if (uid === user.uid && (!updates.active || updates.role !== existingStaff.role)) {
+        throw new Error('You cannot suspend or demote your own currently signed-in account.');
       }
 
       const assignedBranch = isBranchScopedRole
         ? updates.allocatedDealershipId ?? allDealerships[0]?.id ?? '1'
         : updates.allocatedDealershipId;
+
+      const clearEscalation = updates.role !== 'it_agent' || !updates.active;
 
       try {
         await updateDoc(doc(db, 'staffUsers', uid), {
@@ -1855,31 +2497,34 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
           role: updates.role,
           allocatedDealershipId: assignedBranch,
           active: updates.active,
+          ...(clearEscalation ? { activeEscalation: null } : {}),
           updatedAt: serverTimestamp(),
           updatedBy: user.uid,
         });
 
-        if (updates.role === 'admin' && updates.active) {
-          await setDoc(doc(db, 'admins', uid), {
-            uid,
-            email: existingStaff.email,
-            role: 'admin',
-            addedAt: serverTimestamp(),
-          });
-        } else {
-          await deleteDoc(doc(db, 'admins', uid)).catch(() => {});
+        if (isAdmin) {
+          if (updates.role === 'admin' && updates.active) {
+            await setDoc(doc(db, 'admins', uid), {
+              uid,
+              email: existingStaff.email,
+              role: 'admin',
+              addedAt: serverTimestamp(),
+            });
+          } else {
+            await deleteDoc(doc(db, 'admins', uid)).catch(() => {});
+          }
         }
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `staffUsers/${uid}`);
       }
     },
-    [user, isAdmin, staffUsers, allDealerships]
+    [user, isAdmin, isItManager, staffUsers, allDealerships]
   );
 
   const removeStaffUser = useCallback(
     async (uid: string) => {
       if (!user || !isAdmin) {
-        throw new Error('Only Administrators can remove staff users.');
+        throw new Error('Only Group Administrators can remove staff users.');
       }
       if (uid === user.uid) {
         throw new Error('You cannot remove your own currently signed-in account.');
@@ -1892,6 +2537,237 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
       }
     },
     [user, isAdmin]
+  );
+
+  const createItTicket = useCallback(
+    async (payload: {
+      targetDealershipId: DealershipId | null;
+      requestedRole: EscalatableStaffRole;
+      requestedDurationMinutes: number;
+      title: string;
+      reason: string;
+    }): Promise<string> => {
+      if (!user || !isItAgent || !staffProfile?.allocatedDealershipId) {
+        throw new Error('Only Branch IT Agents can submit role-escalation tickets.');
+      }
+      const title = payload.title.trim().slice(0, 160);
+      const reason = payload.reason.trim().slice(0, 2000);
+      if (title.length < 3) throw new Error('Ticket title must be at least 3 characters.');
+      if (reason.length < 5) throw new Error('Please explain why you need elevated access (at least 5 characters).');
+      const durationMins = Math.min(1440, Math.max(5, Math.round(Number(payload.requestedDurationMinutes || 60))));
+      const targetBranch =
+        payload.requestedRole === 'marketing'
+          ? payload.targetDealershipId ?? null
+          : payload.targetDealershipId ?? staffProfile.allocatedDealershipId;
+      if (payload.requestedRole !== 'marketing' && !targetBranch) {
+        throw new Error('Please choose a target dealership branch for this role.');
+      }
+
+      const id = sanitizeId(`itt-${Date.now()}-${Math.floor(Math.random() * 1000)}`, 'itt');
+      const docPayload = {
+        id,
+        requesterUid: user.uid,
+        requesterName: staffProfile.fullName || user.displayName || 'Branch IT Agent',
+        requesterEmail: staffProfile.email || user.email || '',
+        requesterBranchId: staffProfile.allocatedDealershipId,
+        targetDealershipId: targetBranch,
+        requestedRole: payload.requestedRole,
+        requestedDurationMinutes: durationMins,
+        title,
+        reason,
+        status: 'open',
+        reviewNote: '',
+        reviewedByUid: null,
+        reviewedByName: null,
+        approvedAt: null,
+        expiresAt: null,
+        resolvedAt: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      try {
+        await setDoc(doc(db, 'itTickets', id), docPayload);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `itTickets/${id}`);
+      }
+      return id;
+    },
+    [user, isItAgent, staffProfile]
+  );
+
+  const approveItTicketEscalation = useCallback(
+    async (payload: { ticketId: string; durationMinutes: number; reviewNote: string }) => {
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('IT Manager or Group Administrator privileges are required to grant escalation.');
+      }
+      const ticket = itTickets.find((t) => t.id === payload.ticketId);
+      if (!ticket) throw new Error('IT ticket not found.');
+
+      const targetStaff = staffUsers.find((s) => s.uid === ticket.requesterUid);
+      if (!targetStaff || targetStaff.role !== 'it_agent' || !targetStaff.active) {
+        throw new Error('The requesting staff member must be an active Branch IT Agent.');
+      }
+
+      const durationMins = Math.min(1440, Math.max(5, Math.round(Number(payload.durationMinutes || ticket.requestedDurationMinutes || 60))));
+      const expiresDate = new Date(Date.now() + durationMins * 60 * 1000);
+      const expiresTs = Timestamp.fromDate(expiresDate);
+      const reviewerName =
+        staffProfile?.fullName || user.displayName || user.email || 'IT Manager';
+      const reviewNote = payload.reviewNote.trim().slice(0, 1000);
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'itTickets', ticket.id), {
+        status: 'approved_temporary',
+        reviewNote,
+        reviewedByUid: user.uid,
+        reviewedByName: reviewerName.slice(0, 120),
+        approvedAt: serverTimestamp(),
+        expiresAt: expiresTs,
+        resolvedAt: null,
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffUsers', ticket.requesterUid), {
+        activeEscalation: {
+          ticketId: ticket.id,
+          grantedRole: ticket.requestedRole,
+          dealershipId:
+            ticket.requestedRole === 'marketing'
+              ? ticket.targetDealershipId ?? null
+              : ticket.targetDealershipId ?? ticket.requesterBranchId,
+          expiresAt: expiresTs,
+          grantedBy: user.uid,
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      });
+
+      try {
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `itTickets/${ticket.id}/approve`);
+      }
+    },
+    [user, isAdmin, isItManager, itTickets, staffUsers, staffProfile]
+  );
+
+  const resolveItTicketDirectly = useCallback(
+    async (payload: { ticketId: string; reviewNote: string }) => {
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('IT Manager or Group Administrator privileges are required to resolve tickets.');
+      }
+      const ticket = itTickets.find((t) => t.id === payload.ticketId);
+      if (!ticket) throw new Error('IT ticket not found.');
+
+      const reviewerName =
+        staffProfile?.fullName || user.displayName || user.email || 'IT Manager';
+      const reviewNote =
+        payload.reviewNote.trim().slice(0, 1000) || 'Completed directly by Group IT.';
+      const targetStaff = staffUsers.find((s) => s.uid === ticket.requesterUid);
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'itTickets', ticket.id), {
+        status: 'resolved',
+        reviewNote,
+        reviewedByUid: user.uid,
+        reviewedByName: reviewerName.slice(0, 120),
+        resolvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      if (targetStaff?.activeEscalation?.ticketId === ticket.id) {
+        batch.update(doc(db, 'staffUsers', ticket.requesterUid), {
+          activeEscalation: null,
+          updatedAt: serverTimestamp(),
+          updatedBy: user.uid,
+        });
+      }
+
+      try {
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `itTickets/${ticket.id}/resolve`);
+      }
+    },
+    [user, isAdmin, isItManager, itTickets, staffUsers, staffProfile]
+  );
+
+  const rejectItTicket = useCallback(
+    async (payload: { ticketId: string; reviewNote: string }) => {
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('IT Manager or Group Administrator privileges are required to reject tickets.');
+      }
+      const ticket = itTickets.find((t) => t.id === payload.ticketId);
+      if (!ticket) throw new Error('IT ticket not found.');
+      const reviewNote = payload.reviewNote.trim().slice(0, 1000);
+      if (reviewNote.length < 3) {
+        throw new Error('Please provide a short reason before rejecting an escalation request.');
+      }
+
+      const reviewerName =
+        staffProfile?.fullName || user.displayName || user.email || 'IT Manager';
+      const targetStaff = staffUsers.find((s) => s.uid === ticket.requesterUid);
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'itTickets', ticket.id), {
+        status: 'rejected',
+        reviewNote,
+        reviewedByUid: user.uid,
+        reviewedByName: reviewerName.slice(0, 120),
+        resolvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      if (targetStaff?.activeEscalation?.ticketId === ticket.id) {
+        batch.update(doc(db, 'staffUsers', ticket.requesterUid), {
+          activeEscalation: null,
+          updatedAt: serverTimestamp(),
+          updatedBy: user.uid,
+        });
+      }
+
+      try {
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `itTickets/${ticket.id}/reject`);
+      }
+    },
+    [user, isAdmin, isItManager, itTickets, staffUsers, staffProfile]
+  );
+
+  const revokeItTicketEscalation = useCallback(
+    async (payload: { ticketId: string; reviewNote: string }) => {
+      if (!user || (!isAdmin && !isItManager)) {
+        throw new Error('IT Manager or Group Administrator privileges are required to revoke escalations.');
+      }
+      const ticket = itTickets.find((t) => t.id === payload.ticketId);
+      if (!ticket) throw new Error('IT ticket not found.');
+
+      const reviewerName =
+        staffProfile?.fullName || user.displayName || user.email || 'IT Manager';
+      const reviewNote =
+        payload.reviewNote.trim().slice(0, 1000) || 'Temporary elevated access revoked early.';
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'itTickets', ticket.id), {
+        status: 'revoked',
+        reviewNote,
+        reviewedByUid: user.uid,
+        reviewedByName: reviewerName.slice(0, 120),
+        resolvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      batch.update(doc(db, 'staffUsers', ticket.requesterUid), {
+        activeEscalation: null,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      });
+
+      try {
+        await batch.commit();
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `itTickets/${ticket.id}/revoke`);
+      }
+    },
+    [user, isAdmin, isItManager, itTickets, staffProfile]
   );
 
   const getBranchDependencies = useCallback(
@@ -1914,7 +2790,7 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
   const deleteBranchIfUnused = useCallback(
     async (branchId: DealershipId) => {
       if (!user || !isAdmin) {
-        throw new Error('Only Administrators can delete dealership branches.');
+        throw new Error('Only Group Administrators can delete dealership branches.');
       }
       const deps = getBranchDependencies(branchId);
       if (deps.totalCount > 0) {
@@ -1936,11 +2812,17 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     user,
     authReady,
     isAdmin,
+    isBranchAdmin,
+    isItManager,
+    isItAgent,
     isSalesAgent,
     isMarketing,
     isPartsExec,
     isServiceClerk,
+    baseStaffRole,
     staffRole,
+    activeEscalation,
+    escalationRemainingSeconds,
     canAccessPortal,
     allocatedBranchId,
     staffProfile,
@@ -1960,12 +2842,16 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     activeEvents,
     activeCompetitions,
     activeNews,
+    activeJobs,
     allVehicles,
     allPromotions,
     archivedPromotions,
     allNews,
+    allJobs,
+    jobApplications,
     leads,
     staffUsers,
+    itTickets,
     seedCatalogToFirestore,
     seedAllDefaultData,
     saveVehicle,
@@ -1979,11 +2865,21 @@ export function DealershipDataProvider({ children }: { children: React.ReactNode
     deletePromotion,
     saveNews,
     deleteNews,
+    saveJobOpening,
+    deleteJobOpening,
+    submitJobApplication,
+    updateJobApplicationStatus,
+    deleteJobApplication,
     updateLeadStatus,
     deleteLead,
     createStaffUser,
     updateStaffUser,
     removeStaffUser,
+    createItTicket,
+    approveItTicketEscalation,
+    resolveItTicketDirectly,
+    rejectItTicket,
+    revokeItTicketEscalation,
     getBranchDependencies,
     deleteBranchIfUnused,
     submitLead,

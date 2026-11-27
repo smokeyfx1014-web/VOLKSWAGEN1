@@ -2,7 +2,7 @@
 
 This guide explains how any Volkswagen dealership group—or an independent hosting partner—can isolate, configure, build, and deploy this platform onto **your own Firebase account**, **your own domain names**, and **your own infrastructure** (on-premise data centers, VMware/Proxmox VMs, bare-metal Linux servers, Docker hosts, or cloud platforms).
 
-Nothing in production depends on the original developer's accounts, APIs, or mail servers.
+Nothing in production depends on the original developer's accounts, APIs, or mail servers. For a full handover pack including **step-by-step API & password acquisition examples** and **future error troubleshooting**, see **[`HANDOVER_MANUAL.md`](./HANDOVER_MANUAL.md)**.
 
 ---
 
@@ -13,7 +13,7 @@ Nothing in production depends on the original developer's accounts, APIs, or mai
 3. [Environment Variables (`.env`)](#3-environment-variables-env)
 4. [Option A — Docker & Docker Compose (Data Centers & Containers)](#4-option-a--docker--docker-compose-data-centers--containers)
 5. [Option B — Bare-Metal Linux VM with PM2 & Nginx Reverse Proxy](#5-option-b--bare-metal-linux-vm-with-pm2--nginx-reverse-proxy)
-6. [Option C — Static Hosting (`dist/` on Apache / Nginx / Firebase Hosting)](#6-option-c--static-hosting-dist-on-apache--nginx--firebase-hosting)
+6. [Option C — Vercel (`*.vercel.app`) & Static Hosting (`dist/`)](#6-option-c--static-hosting-dist-on-apache--nginx--firebase-hosting)
 7. [Post-Deployment Dealership Group & Multi-Branch Onboarding (`/admin`)](#7-post-deployment-dealership-group--multi-branch-onboarding-admin)
 8. [Verification & Ongoing Operations](#8-verification--ongoing-operations)
 
@@ -118,7 +118,8 @@ cp .env.example .env
 | Variable | Required | Default | Description |
 | :--- | :---: | :--- | :--- |
 | `PORT` | No | `3000` | Port Express listens on inside the container/server |
-| `APP_URL` | No | `http://localhost:3000` | Public canonical URL of your deployment |
+| `APP_URL` | Recommended | `http://localhost:3000` | Public canonical URL of your deployment (e.g. `https://your-app.vercel.app` or `https://www.yourvw.co.za`) |
+| `GEMINI_API_KEY` | For Disc Scan | *(empty)* | Server-side Google Gemini API key (`AIzaSy...` from `aistudio.google.com/apikey`) for extracting VIN, engine code & plate from Service/Parts licence disc uploads. Never prefix with `VITE_`. |
 | `DECODO_API_KEY` | No | *(empty)* | Optional server-side Decodo Web Data API key for automated AutoTrader scraping (`POST /api/autotrader-scrape`). Never prefix with `VITE_`. |
 | `SMTP_HOST` | No | `smtp.gmail.com` | Corporate SMTP relay hostname (Google Workspace / Gmail, Microsoft 365, Postmark, or on-prem SMTP) |
 | `SMTP_PORT` | No | `465` | SMTP port (`465` uses TLS/SSL; `587` uses STARTTLS) |
@@ -127,7 +128,7 @@ cp .env.example .env
 | `SMTP_FROM` | No | `Dealership Requests <SMTP_USER>` | Sender display name and address shown on lead notification emails |
 | `DEFAULT_LEAD_NOTIFY_EMAIL` | No | `BOOTSTRAPPED_ADMIN_EMAIL` | Final fallback recipient if a branch/group notification email is missing |
 
-> **Note:** Staff account onboarding uses one-click **Send via WhatsApp**, **Open Email App (`mailto:`)**, and **Copy** buttons inside `/admin`. Customer request alerts (Test Drives, Service Bookings, Parts Enquiries, Finance Applications, Contact forms, Events, and Competitions) are dispatched server-side via Nodemailer (`POST /api/notify-lead`) using each branch's own outgoing SMTP settings (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`) and department routing emails stored in Firestore.
+> **Note:** Staff account onboarding uses one-click **Send via WhatsApp**, **Open Email App (`mailto:`)**, and **Copy** buttons inside `/admin`. Customer request alerts (Test Drives, Service Bookings, Parts Enquiries, Spotters, Finance Applications, Contact forms, Events, and Competitions) and Career status emails are dispatched server-side via Nodemailer using each branch's outgoing SMTP settings and department routing emails stored in Firestore.
 
 ---
 
@@ -313,7 +314,16 @@ sudo certbot --nginx \
 
 ---
 
-## 6. Option C — Static Hosting (`dist/` on Apache / Nginx / Firebase Hosting)
+## 6. Option C — Vercel (`*.vercel.app`) & Static Hosting (`dist/`)
+
+### Vercel Full-Stack Deployment (Vite + `/api/index.ts`)
+This repository includes `/vercel.json` and `/api/index.ts`, allowing you to deploy both the React SPA and all Express `/api/*` endpoints directly on Vercel:
+1. Import the repo into **Vercel** (`Framework Preset: Vite`, Build Command: `npm run build`, Output Directory: `dist`).
+2. Add all environment variables from Section 3 inside **Vercel → Project → Settings → Environment Variables**.
+3. Deploy, then add your `*.vercel.app` domain inside **Firebase Console → Authentication → Settings → Authorized domains**.
+4. Note: Vercel serverless functions use ephemeral `/tmp` storage and cap upload bodies at 4.5 MB. For permanent file persistence across container restarts, deploy Option A (Docker) or Option B (PM2 + Nginx).
+
+### Pure Static Hosting (`dist/` on Apache / Nginx / Firebase Hosting)
 
 If you prefer pure static web hosting without Node.js at runtime:
 
@@ -323,7 +333,7 @@ If you prefer pure static web hosting without Node.js at runtime:
    - **Apache / cPanel**: upload the contents of `dist/` into `public_html/`. `public/.htaccess` is automatically copied into `dist/` to handle SPA routes (`/vehicles`, `/admin`, `/service`, etc.).
    - **Nginx static site**: add `try_files $uri $uri/ /index.html;` inside `location /`.
 
-> **Note:** Static hosting does not run the Express `server.ts` backend (`/api/autotrader-scrape`, `/api/upload-media`, or `/api/notify-lead` SMTP emails). For automatic customer email notifications and direct media uploads, deploy Option A (Docker) or Option B (PM2 + Nginx).
+> **Note:** Pure static hosting does not run the Express `server.ts` backend (`/api/extract-licence-disc`, `/api/autotrader-scrape`, `/api/upload-media`, or `/api/notify-lead` SMTP emails). For full backend functionality, deploy **Vercel**, **Option A (Docker)**, or **Option B (PM2 + Nginx)**.
 
 ---
 
@@ -334,15 +344,18 @@ Once your instance is live and reachable over HTTPS:
 1. Navigate to `https://your-primary-domain/admin` and click **Administrator Google Sign-In** using the Google account you configured in Section 2.2.
 2. Click **Seed / Reset Default Group Data** in the Admin header to initialize `/groupSettings/main`, baseline branches, sample campaigns, and news (or skip straight to registering your own branches).
 3. Open **Group & Branches** in the Admin Portal:
-   - **Dealership Group Corporate Profile**: Configure your `Group Name`, `Legal Entity`, `FSP Number`, `Compliance Officer`, `Compliance Email`, `Default Lead Notification Email`, `VW Roadside Assist` numbers, `Test Drive Hours Summary`, `Group Logo`, `VW Emblem`, `YouTube Channel`, and `Default Fallback Branch`. Use the **Automatic Customer Request Emails (Nodemailer SMTP)** panel to verify `SMTP_PASS` is detected and send a live test email.
-   - **Register New Dealership Branch**: Click **Add New Branch** to register as many branches as your group operates (**1, 2, 3, 4, or more**)—complete with branch ID, 2–4 letter Reference Code (e.g. `DBN`, `PMB`, `PTA`), domain name, physical/postal address, contact details, **all 5 required Department Customer Request Notification Emails**, **Branch Outgoing Email Server (Nodemailer SMTP)** (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_FROM`, `DEFAULT_LEAD_NOTIFY_EMAIL`, and `SMTP_PASS` secret key), trading hours, social links, and optional AutoTrader Dealer ID. Click **Help / Setup Guide** inside the branch form at any time to view or download the **Dealer Principal Setup Guide** (`.html` printable PDF / `.md`).
-   - **Archive or Safely Remove Default Branches**: Archive branches you don't need immediately, or permanently delete unused branches once no vehicles, branch-scoped promotions, or assigned staff reference them (built-in dependency protection prevents orphan records).
-4. Open **Users & Roles → Add Staff User** to onboard your dealership team across all 5 roles:
-   - **Administrator** *(Group-Wide)*
-   - **Car Sales Agent** *(Branch-Scoped Vehicles & Branch Specials/Events)*
-   - **Marketing Coordinator** *(Group-Wide Motoring News, Specials, Events & Competitions)*
-   - **Parts Sales Executive** *(Branch-Scoped Parts Leads & Department Specials)*
-   - **Service Booking Clerk** *(Branch-Scoped Service Leads & Department Specials)*
+   - **Dealership Group Corporate Profile**: Configure your `Group Name`, `Legal Entity`, `FSP Number`, `Compliance Officer`, `Compliance Email`, `Default Lead Notification Email`, `Primary Website / Vercel URL (APP_URL)`, `Group Fallback SMTP`, `VW Roadside Assist` numbers, `Group Logo`, `VW Emblem`, `YouTube Channel`, and `Default Fallback Branch`. Click **Open .env Builder & Handover Manual** to generate your `.env` / Vercel variable list, verify live API readiness (`GEMINI_API_KEY`, `SMTP_PASS`, `DECODO_API_KEY`), or export a printable handover pack.
+   - **Register New Dealership Branch**: Click **Add New Branch** to register as many branches as your group operates (**1, 2, 3, 4, or more**)—complete with branch ID, Reference Code (e.g. `LVW`), domain name, legal/FSP identity, physical/postal address, trading hours, **all 5 required Department Customer Request Notification Emails**, **Branch Outgoing Email Server (Nodemailer SMTP)**, social links, and optional AutoTrader Dealer ID/URL. Click **Help / Setup Guide** inside the branch form at any time to view or download the **Dealer Principal Setup Guide**.
+   - **Archive or Safely Remove Default Branches**: Archive branches you don't need immediately, or permanently delete unused branches once no vehicles, branch-scoped promotions, or assigned staff reference them.
+4. Open **Users & Roles → Add Staff User** to onboard your dealership team across all **8 roles**:
+   - **Group Administrator (`admin`)** *(Group-Wide full control)*
+   - **IT Manager (`it_manager`)** *(Group-wide technical setup, branches, non-admin staff & IT Escalation Ticket governance)*
+   - **Branch Admin / Dealer Principal (`branch_admin`)** *(Full control within their allocated branch)*
+   - **Branch IT Agent (`it_agent`)** *(Branch technical readiness + submits timed role-escalation tickets)*
+   - **Car Sales Executive (`agent`)** *(Branch manual vehicles, branch specials/events & Spotter Leads)*
+   - **Marketing Coordinator (`marketing`)** *(Group-Wide Motoring News, Specials, Events & Competitions)*
+   - **Parts Sales Executive (`parts`)** *(Branch-Scoped Parts Leads & Department Specials)*
+   - **Service Booking Clerk (`service`)** *(Branch-Scoped Service Leads & Department Specials)*
 5. Use the one-click **Send via WhatsApp**, **Open Email App**, or **Copy Welcome Message** buttons after creating each account to hand over login details and temporary passwords.
 
 ---

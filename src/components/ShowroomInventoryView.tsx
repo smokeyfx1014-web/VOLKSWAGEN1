@@ -5,7 +5,6 @@ import {
   Award,
   CalendarClock,
   CheckCircle2,
-  MapPin,
   RotateCcw,
   Sparkles,
 } from 'lucide-react';
@@ -17,17 +16,16 @@ import {
   CmsPromotion,
   CmsVehicle,
   DealershipId,
-  StockCondition,
-  VehicleCategory,
 } from '../types/dealership';
 import { DealershipImage } from './DealershipImage';
 import { SectionHeader } from './MotionPrimitives';
 import { PromotionMedia } from './PromotionMedia';
-import { VehicleImageSlider } from './VehicleImageSlider';
-import { Button, Select } from './ui/shadcn';
+import { VehicleSearchShowcase } from './VehicleSearchShowcase';
+import { Button } from './ui/shadcn';
 
 interface ShowroomInventoryViewProps {
   mode: 'vehicles' | 'specials';
+  onNavigate?: (route: import('../types/dealership').AppRoute) => void;
   onBookTestDrive: (vehicleName: string, homeDealershipId?: DealershipId | null) => void;
   onEnquireDeal: (item: {
     title: string;
@@ -35,6 +33,7 @@ interface ShowroomInventoryViewProps {
     dealSummary?: string;
     homeDealershipId?: DealershipId | null;
   }) => void;
+  onApplyFinance?: (vehicle: CmsVehicle) => void;
   onEnterCompetition?: (competitionTitle: string) => void;
 }
 
@@ -47,30 +46,18 @@ const MASTERCARS_PILLARS = [
 
 export function ShowroomInventoryView({
   mode,
+  onNavigate,
   onBookTestDrive,
   onEnquireDeal,
+  onApplyFinance,
   onEnterCompetition,
 }: ShowroomInventoryViewProps) {
-  const { activeDealership, dealershipsById, activeDealerships, groupProfile } = useDealership();
-  const { activeVehicles, activeSpecials, activeCompetitions, loadingCatalog } =
+  const { activeDealership, dealershipsById, groupProfile } = useDealership();
+  const { activeSpecials, activeCompetitions, loadingCatalog } =
     useDealershipData();
 
-  const [condition, setCondition] = useState<StockCondition>('All');
-  const [category, setCategory] = useState<VehicleCategory>('All');
-  const [branchFilter, setBranchFilter] = useState<'All' | DealershipId>('All');
   const [maxPrice, setMaxPrice] = useState<number>(2500000);
   const [maxMonthly, setMaxMonthly] = useState<number>(35000);
-
-  const filteredVehicles = useMemo(() => {
-    return activeVehicles.filter((item) => {
-      if (condition !== 'All' && item.category !== condition) return false;
-      if (category !== 'All' && item.bodyStyle !== category) return false;
-      if (branchFilter !== 'All' && item.homeDealershipId !== branchFilter) return false;
-      if (item.price > maxPrice) return false;
-      if (item.monthlyFrom > maxMonthly) return false;
-      return true;
-    });
-  }, [activeVehicles, condition, category, branchFilter, maxPrice, maxMonthly]);
 
   const filteredSpecials = useMemo(() => {
     return activeSpecials.filter((sp) => {
@@ -81,9 +68,6 @@ export function ShowroomInventoryView({
   }, [activeSpecials, maxPrice, maxMonthly]);
 
   const resetFilters = () => {
-    setCondition('All');
-    setCategory('All');
-    setBranchFilter('All');
     setMaxPrice(2500000);
     setMaxMonthly(35000);
   };
@@ -357,262 +341,18 @@ export function ShowroomInventoryView({
 
   return (
     <div className="bg-[#F8FAFC] pt-24 pb-20">
+      <VehicleSearchShowcase
+        variant="page"
+        pageSize={9}
+        onNavigate={onNavigate}
+        onBookTestDrive={onBookTestDrive}
+        onEnquireDeal={onEnquireDeal}
+        onApplyFinance={onApplyFinance}
+      />
+
+      {/* MasterCars Certified Guarantee Strip */}
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <SectionHeader
-          kicker="Master Group Showroom & MasterCars Inventory"
-          title="Group New, Used & MasterCars Stock"
-          description={`Browse available Volkswagen stock across ${activeDealerships.map((b) => b.shortName).join(', ')}—and submit your enquiry or test-drive request directly through ${activeDealership.name}.`}
-        />
-
-        {/* Multi-Faceted Showroom Filter Bar */}
-        <div className="mt-8 rounded-2xl border border-[#E2E8F0] bg-white p-5 sm:p-6 space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#E2E8F0] pb-4">
-            <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-[#F1F5F9] p-1">
-              {(['All', 'New', 'MasterCars', 'Used'] as StockCondition[]).map((cond) => (
-                <button
-                  key={cond}
-                  type="button"
-                  onClick={() => setCondition(cond)}
-                  className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    condition === cond
-                      ? 'bg-[#001E50] text-white'
-                      : 'text-[#475569] hover:text-[#091224]'
-                  }`}
-                >
-                  {cond}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-3">
-              <span className="font-mono text-xs text-[#64748B] tabular-nums">
-                {filteredVehicles.length} vehicles available
-              </span>
-              <Button variant="ghost" size="sm" onClick={resetFilters}>
-                <RotateCcw className="h-3.5 w-3.5" />
-                <span>Reset</span>
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1.5">
-                Holding Branch
-              </label>
-              <Select
-                value={branchFilter}
-                onChange={(e) => setBranchFilter(e.target.value as 'All' | DealershipId)}
-              >
-                <option value="All">All Group Branches</option>
-                {activeDealerships.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.shortName} ({b.city})
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1.5">
-                Body Type
-              </label>
-              <Select
-                value={category}
-                onChange={(e) => setCategory(e.target.value as VehicleCategory)}
-              >
-                <option value="All">All Body Types</option>
-                <option value="Hatchbacks & Sedans">Hatchbacks &amp; Sedans</option>
-                <option value="SUVs">SUVs</option>
-                <option value="Commercial">Commercial &amp; Bakkies</option>
-              </Select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1.5">
-                Max Price: {formatZAR(maxPrice)}
-              </label>
-              <input
-                type="range"
-                min={150000}
-                max={2500000}
-                step={25000}
-                value={maxPrice}
-                onChange={(e) => setMaxPrice(Number(e.target.value))}
-                className="w-full accent-[#001E50]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1.5">
-                Max Monthly: {formatZAR(maxMonthly)} p/m
-              </label>
-              <input
-                type="range"
-                min={3000}
-                max={35000}
-                step={500}
-                value={maxMonthly}
-                onChange={(e) => setMaxMonthly(Number(e.target.value))}
-                className="w-full accent-[#001E50]"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Live Vehicle Grid */}
-        {loadingCatalog && filteredVehicles.length === 0 ? (
-          <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="h-96 rounded-xl border border-[#E2E8F0] bg-white animate-pulse"
-              />
-            ))}
-          </div>
-        ) : filteredVehicles.length === 0 ? (
-          <div className="mt-10 rounded-xl border border-[#E2E8F0] bg-white p-12 text-center">
-            <p className="text-base font-medium text-[#091224]">
-              {activeVehicles.length === 0
-                ? 'No vehicles are currently listed in Group Showroom.'
-                : 'No vehicles match your current filter criteria.'}
-            </p>
-            <p className="mt-1.5 text-sm text-[#64748B]">
-              {activeVehicles.length === 0
-                ? 'Sync AutoTrader stock or add vehicles manually in the Admin portal to display showroom listings here.'
-                : 'Adjust or reset your filters to view available group vehicles.'}
-            </p>
-            {activeVehicles.length > 0 && (
-              <Button variant="outline" size="sm" className="mt-4" onClick={resetFilters}>
-                Reset Showroom Filters
-              </Button>
-            )}
-          </div>
-        ) : (
-          <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {filteredVehicles.map((item: CmsVehicle) => {
-              const homeBranch = dealershipsById[item.homeDealershipId] ?? activeDealership;
-              const relatedSpecial = activeSpecials.find(
-                (sp) =>
-                  sp.vehicleName &&
-                  (sp.vehicleName.toLowerCase().includes(item.model.toLowerCase()) ||
-                    item.title.toLowerCase().includes(sp.vehicleName.toLowerCase()))
-              );
-
-              return (
-                <motion.article
-                  key={item.id}
-                  whileHover={{ y: -3 }}
-                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-                  className="group flex h-full flex-col overflow-hidden rounded-xl border border-[#E2E8F0] bg-white transition-shadow duration-200 hover:shadow-lg"
-                >
-                  <VehicleImageSlider
-                    images={item.images}
-                    alt={item.title}
-                    badge={
-                      <div className="absolute top-3 left-3 z-10 inline-flex items-center gap-1.5 rounded-md bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#001E50] shadow-xs backdrop-blur-xs">
-                        <MapPin className="h-3 w-3 text-[#00437A]" />
-                        <span>Location: {homeBranch.shortName}</span>
-                      </div>
-                    }
-                  />
-
-                  <div className="flex flex-1 flex-col justify-between p-6">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 text-xs text-[#475569]">
-                        <span>
-                          {item.category} · {item.bodyStyle}
-                        </span>
-                        <span className="font-mono tabular-nums">
-                          {item.year} ·{' '}
-                          {item.mileage === 0
-                            ? '0 km'
-                            : `${item.mileage.toLocaleString('en-ZA')} km`}
-                        </span>
-                      </div>
-
-                      <h3 className="mt-2 font-display text-lg font-semibold text-[#091224]">
-                        {item.title}
-                      </h3>
-                      <p className="mt-1 text-xs text-[#64748B]">
-                        {item.model}
-                        {item.colour ? ` · ${item.colour}` : ''}
-                      </p>
-
-                      {relatedSpecial && (
-                        <p className="mt-2.5 text-xs font-medium text-[#001E50]">
-                          {relatedSpecial.description}
-                        </p>
-                      )}
-
-                      <dl className="mt-4 grid grid-cols-2 gap-3 border-y border-[#E2E8F0] py-2.5 text-xs">
-                        <div>
-                          <dt className="text-[#64748B]">Gearbox</dt>
-                          <dd className="mt-0.5 font-medium text-[#091224] truncate">
-                            {item.transmission}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-[#64748B]">Fuel</dt>
-                          <dd className="mt-0.5 font-medium text-[#091224] truncate">
-                            {item.fuelType}
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    <div className="mt-5">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <div>
-                          <span className="block text-[11px] text-[#64748B]">
-                            {item.category === 'New' ? 'From Retail' : 'Selling Price'}
-                          </span>
-                          <span className="font-mono text-lg font-semibold text-[#091224] tabular-nums">
-                            {formatZAR(item.price)}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="block text-[11px] text-[#64748B]">Est. Instalment</span>
-                          <span className="font-mono text-xs font-semibold text-[#00437A] tabular-nums">
-                            {formatZAR(item.monthlyFrom)} p/m
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 grid grid-cols-2 gap-2.5">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => onBookTestDrive(item.title, item.homeDealershipId)}
-                        >
-                          Test Drive
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() =>
-                            onEnquireDeal({
-                              title: item.title,
-                              price: item.price,
-                              dealSummary: relatedSpecial?.description,
-                              homeDealershipId: item.homeDealershipId,
-                            })
-                          }
-                        >
-                          <span>Enquire via {activeDealership.shortName}</span>
-                          <ArrowRight className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </motion.article>
-              );
-            })}
-          </div>
-        )}
-
-        {/* MasterCars Certified Guarantee Strip */}
-        <div className="mt-16 overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white">
+        <div className="mt-14 overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white">
           <DealershipImage
             asset={MASTERCARS_HERO_ASSET}
             alt={`${activeDealership.name} MasterCars Certified Pre-Owned Standard`}

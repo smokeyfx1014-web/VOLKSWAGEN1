@@ -177,7 +177,10 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
           : null;
         const verifiedAdmin =
           Boolean(adminSnap?.exists()) ||
-          Boolean(staffData?.role === 'admin' && staffData?.active === true);
+          Boolean(
+            staffData?.active === true &&
+              (staffData?.role === 'admin' || staffData?.role === 'it_manager')
+          );
         if (!cancelled) setIsBranchAdmin(verifiedAdmin);
       } catch {
         if (!cancelled) setIsBranchAdmin(false);
@@ -417,6 +420,16 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
         ? profile.defaultBranchId.trim()
         : activeDealerships[0]?.id ?? '1';
 
+      const parsedPort = Number(profile.smtpPort ?? 465);
+      const safePort =
+        Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535
+          ? Math.round(parsedPort)
+          : 465;
+      const rawPassKey = (profile.smtpPassEnvKey || '').trim().toUpperCase();
+      const safePassKey = /^SMTP_PASS(?:_[A-Z0-9_]{1,40})?$/.test(rawPassKey)
+        ? rawPassKey
+        : 'SMTP_PASS';
+
       const payload: DealershipGroupProfile = {
         id: 'main',
         groupName: profile.groupName.trim().slice(0, 120),
@@ -432,6 +445,20 @@ export function DealershipProvider({ children }: { children: React.ReactNode }) 
         youtubeUrl: profile.youtubeUrl.trim().slice(0, 300),
         defaultBranchId: safeDefaultBranch,
         defaultNotifyEmail: (profile.defaultNotifyEmail || '').trim().slice(0, 140),
+        primarySiteUrl: (profile.primarySiteUrl || '').trim().slice(0, 300),
+        smtpHost: (profile.smtpHost || '').trim().slice(0, 140),
+        smtpPort: safePort,
+        smtpUser: (profile.smtpUser || '').trim().slice(0, 140),
+        smtpFrom: (profile.smtpFrom || '').trim().slice(0, 180),
+        smtpPassEnvKey: safePassKey.slice(0, 60),
+        licenceScannerEnabled:
+          typeof profile.licenceScannerEnabled === 'boolean'
+            ? profile.licenceScannerEnabled
+            : true,
+        autotraderSyncDefault:
+          typeof profile.autotraderSyncDefault === 'boolean'
+            ? profile.autotraderSyncDefault
+            : true,
         updatedAt: serverTimestamp(),
         updatedBy: uid,
       };

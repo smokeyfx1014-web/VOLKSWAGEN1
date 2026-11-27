@@ -1359,6 +1359,8 @@ export function FinanceApplicationWizard({
                               'articleType',
                               matched.category === 'New'
                                 ? 'New Volkswagen'
+                                : matched.category === 'Demo'
+                                ? 'Demo Vehicle'
                                 : matched.category === 'MasterCars'
                                 ? 'MasterCars Certified'
                                 : 'Pre-Owned'
