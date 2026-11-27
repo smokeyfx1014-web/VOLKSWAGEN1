@@ -8,7 +8,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-export const BOOTSTRAPPED_ADMIN_EMAIL = 'smokeydhlamini@gmail.com';
+export const BOOTSTRAPPED_ADMIN_EMAIL = 'smokeyfx1014@gmail.com';
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
