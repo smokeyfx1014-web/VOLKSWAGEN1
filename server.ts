@@ -26,7 +26,7 @@ const __dirname = path.dirname(__filename);
 const isProduction = process.env.NODE_ENV === 'production';
 const PORT = Number(process.env.PORT || 3000);
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'smokeydhlamini@gmail.com';
+const BOOTSTRAPPED_ADMIN_EMAIL = 'smokeyfx1014@gmail.com';
 const MAX_PAGES_PER_DEALER = 4;
 const VALID_UID_RE = /^[a-zA-Z0-9_-]{2,128}$/;
 
